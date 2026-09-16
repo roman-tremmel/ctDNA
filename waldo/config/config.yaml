@@ -1,0 +1,46 @@
+# Configuration for the WALDO-style within-sample aneuploidy pipeline.
+
+reference:
+  fasta: resources/genome.fa
+  chrom_arms_bed: resources/chrom_arms.hg38.bed
+  line1_bed: resources/line1_elements.hg38.bed
+  # 500kb genome-wide windows, see resources/build_genome_windows.py
+  windows_bed: resources/windows.500kb.hg38.bed
+
+primer:
+  # Same LINE-1 assay chemistry as mfast-seqs/ (FAST-SeqS, Kinde et al. 2012) -
+  # fill in your real primer sequence.
+  forward_seq: "REPLACE_WITH_REAL_L1_PRIMER_SEQUENCE"
+  spacer_min_len: 0
+  spacer_max_len: 7
+  max_error_rate: 0.15
+
+alignment:
+  threads: 4
+  min_mapq: 30
+  min_read_length: 20
+
+qc:
+  min_total_reads: 20000
+
+clustering:
+  # Number of window clusters to learn from the euploid reference panel.
+  # Windows are grouped by how correlated their normalized read fractions
+  # are across reference samples (a stand-in for Douville et al.'s
+  # "genomic intervals with similar read depths" - see waldo/README.md
+  # for why this differs from the paper's undisclosed exact method).
+  n_clusters: 40
+  min_reference_samples: 10
+
+excluded_arms:
+  - chr13p
+  - chr14p
+  - chr15p
+  - chr21p
+  - chr22p
+  - chrYp
+  - chrYq
+
+score:
+  # |Z| threshold for calling an individual chromosome arm gained/lost
+  arm_z_cutoff: 3.0

@@ -1,0 +1,7 @@
+numpy
+pandas
+scipy
+pyyaml
+pysam
+scikit-learn
+joblib

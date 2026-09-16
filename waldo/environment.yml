@@ -1,0 +1,17 @@
+name: waldo-aneuploidy
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.11
+  - bwa
+  - samtools
+  - bedtools
+  - cutadapt
+  - numpy
+  - pandas
+  - scipy
+  - pyyaml
+  - pysam
+  - scikit-learn
+  - joblib

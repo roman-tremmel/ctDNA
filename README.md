@@ -1,123 +1,75 @@
-# LINE-1 Aneuploidy Score Pipeline
+# ctDNA Aneuploidy Pipelines (LINE-1 amplicon sequencing)
 
-A from-scratch, FASTQ-to-score reimplementation of the read-processing
-side of **mFAST-SeqS** (modified Fast Aneuploidy Screening
-Test-Sequencing), the assay used in Verschoor et al. 2023
-(*npj Breast Cancer* 9:61, [10.1038/s41523-023-00563-w](https://doi.org/10.1038/s41523-023-00563-w))
-and originally described by Belic et al. 2016.
+Two independent, from-scratch FASTQ-to-result pipelines for estimating
+tumor-agnostic ctDNA/aneuploidy signal from LINE-1 amplicon sequencing
+data (FAST-SeqS chemistry, Kinde et al. 2012: a single primer pair
+amplifies retrotransposon LINE-1 loci scattered across the genome from
+very little input cfDNA). Each pipeline reimplements a different
+published analysis strategy for turning those reads into an aneuploidy
+call. They are unrelated code bases - use whichever fits your samples,
+or run both and compare.
 
-## Background
+## [`mfast-seqs/`](mfast-seqs/README.md)
 
-mFAST-SeqS estimates a tumor-agnostic ctDNA "aneuploidy score" from
-plasma cfDNA without any prior knowledge of tumor mutations. A single
-primer pair amplifies the ~500,000 LINE-1 (L1) retrotransposon copies
-scattered across the genome. Because most solid tumors carry
-chromosome-arm-level copy-number gains/losses (aneuploidy), a tumor
-sample's plasma will show a skewed distribution of LINE-1 read
-counts across chromosome arms relative to a healthy-donor baseline -
-even though no single mutation is being tracked.
+Reimplements **mFAST-SeqS** as used in Verschoor et al. 2023
+(*npj Breast Cancer* 9:61) and Belic et al. 2016: per-chromosome-arm
+read counts, normalized to library size, Z-scored against a
+healthy-control panel-of-normals, summed as squared Z-scores into one
+genome-wide **aneuploidy score** (cutoff 5.0 in the paper). Simple,
+well-validated in the literature, but the between-sample panel-of-normals
+comparison is more sensitive to batch effects.
 
-Wet-lab steps (PCR1 with the LINE-1 primer, PCR2 to add a random
-heterogeneity spacer and Illumina indices, sequencing) are **not**
-part of this repo; this pipeline starts from the resulting raw FASTQ
-files and reproduces the paper's dry-lab analysis:
+## [`waldo/`](waldo/README.md)
 
-1. **Trim** the heterogeneity spacer (Fadrosh et al. 2014 dual-indexing
-   scheme) and the LINE-1 primer off each read.
-2. **Align** the remaining (genomic, non-repetitive-primer) sequence to
-   the reference genome.
-3. **Count** reads per chromosome arm, restricted to reads that overlap
-   an annotated LINE-1 locus, normalized to total library size.
-4. **Z-score** each arm's normalized count against a healthy-control
-   panel-of-normals (mean/SD per arm).
-5. **Sum the squared Z-scores** over all included arms (excluding the
-   acrocentric short arms 13p/14p/15p/21p/22p and chrY, which carry too
-   few LINE-1 elements) to get the genome-wide **aneuploidy score**.
-6. Classify against a cutoff (5.0, as used in the paper).
+An original reimplementation of the *ideas* behind **WALDO**
+(Douville et al. 2018, *PNAS* 115(8):1871-1876): genome divided into
+500kb windows, windows grouped into clusters that behave similarly
+across a reference panel, and a **within-sample** test - a window's
+expected reads are predicted from the *same test sample's* own reads in
+its cluster, so a global depth/batch shift cancels out. Also includes an
+optional SVM layer for classifying genome-wide aneuploidy status from
+per-arm Z-scores (useful for low-tumor-fraction samples where no single
+arm reaches significance). More complex, more tunable, and - since the
+paper's exact statistical model is only in an SI Appendix that wasn't
+available while building this - an approximation of the published
+method rather than a byte-exact reproduction. See `waldo/README.md`'s
+"Known limitations" before trusting its output.
+
+## Method comparison
+
+| | mfast-seqs/ | waldo/ |
+|---|---|---|
+| Resolution | Chromosome arm | 500kb windows -> clusters -> arm |
+| Normalization | Between-sample vs. panel-of-normals | Within-sample vs. own cluster totals |
+| Batch-effect robustness | Lower | Higher (by design) |
+| Statistics | Sum of squared arm Z-scores -> 1 score | Per-arm Z-test + optional SVM classifier |
+| Extra signals | None | (Not implemented here) allelic imbalance, sample fingerprinting, somatic mutations/MSI - see `waldo/README.md` |
+| Validated sensitivity | Score >=5 tracks VAF >=5-10% (pre-screening / moderate-to-high ctDNA) | Down to ~1% neoplastic fraction at 99% specificity (SVM, per the paper) |
+| Complexity to run/validate | Low | High |
 
 ## Requirements
 
-System tools (install via your package manager or conda/mamba):
-`bwa`, `samtools`, `bedtools`, `cutadapt`.
+Both pipelines need: `bwa`, `samtools`, `bedtools`, `cutadapt` on PATH,
+and Python 3 with `numpy`, `pandas`, `scipy`, `pyyaml` (`waldo/` also
+needs `scikit-learn` and `joblib` for its optional SVM layer). See each
+subdirectory's `requirements.txt`/`environment.yml`.
 
-Python 3 packages: `numpy`, `pandas`, `scipy`, `pyyaml`
-(`pip install -r requirements.txt`).
+## Running on an air-gapped / offline HPC cluster
 
-## Setup
+Neither pipeline's analysis scripts make any network calls - once a
+reference genome (+ bwa index) and the LINE-1 element BED exist locally,
+everything runs offline. Internet is only needed for two one-time setup
+steps (getting the reference genome, and building the LINE-1 BED from
+UCSC's RepeatMasker track). See `mfast-seqs/README.md`'s "Running on an
+air-gapped / offline HPC cluster" section for the exact commands to run
+elsewhere and transfer over.
 
-1. Get a reference genome and bwa-index it:
-   ```bash
-   bwa index resources/genome.fa
-   ```
-2. Build the chromosome-arm BED (GRCh38 coordinates included, regenerate
-   with `resources/build_chrom_arms_bed.py` if needed, or adapt for
-   another genome build):
-   ```bash
-   python3 resources/build_chrom_arms_bed.py -o resources/chrom_arms.hg38.bed
-   ```
-3. Build the LINE-1 element BED from the UCSC RepeatMasker track (one-time,
-   ~500 MB download):
-   ```bash
-   resources/build_line1_bed.sh resources/line1_elements.hg38.bed
-   ```
-4. Copy `config/config.yaml`, point it at your reference/BED files, and
-   fill in your assay's real LINE-1 primer sequence
-   (`primer.forward_seq`) — this is assay-specific and intentionally
-   left as a placeholder here.
+## Repository layout
 
-## Running
-
-Per-sample: raw FASTQ -> trimmed -> aligned -> per-arm counts:
-
-```bash
-scripts/run_pipeline.sh <sample_name> <sample.fastq.gz> results/<sample_name> config/config.yaml
+```
+mfast-seqs/   arm-level, between-sample panel-of-normals pipeline
+waldo/        window/cluster-based, within-sample pipeline + SVM layer
 ```
 
-This produces `results/<sample_name>/<sample_name>.arm_counts.tsv`.
-
-Build a healthy-control baseline from several such control samples
-(more controls = more stable per-arm mean/SD; the paper's assay QC target
-was >=90,000 usable reads/sample):
-
-```bash
-python3 scripts/build_control_baseline.py \
-  --counts results/control_*/control_*.arm_counts.tsv \
-  --out results/baseline.tsv
-```
-
-Compute the aneuploidy score for a case sample against that baseline:
-
-```bash
-python3 scripts/compute_aneuploidy_score.py \
-  --counts results/<sample_name>/<sample_name>.arm_counts.tsv \
-  --baseline results/baseline.tsv \
-  --cutoff 5.0 \
-  --out results/<sample_name>.aneuploidy.tsv
-```
-
-## Testing
-
-`tests/test_pipeline_synthetic.py` builds a small synthetic genome and
-LINE-1-like loci in memory, simulates reads for several euploid
-"controls" and one sample with an engineered chromosome-arm gain/loss,
-and runs the full pipeline (cutadapt -> bwa -> samtools -> bedtools ->
-scoring) end to end to confirm the code is wired together correctly:
-
-```bash
-python3 tests/test_pipeline_synthetic.py
-```
-
-This validates pipeline *mechanics*, not the real hg38/LINE-1 biology —
-it's a toy genome, not a clinical validation.
-
-## Key methodological differences from the published assay
-
-- The published assay's exact LINE-1 primer sequence and error
-  tolerances (Supplementary Table 1) are not reproduced here; you must
-  supply your own validated primer.
-- Chromosome-arm boundaries are hardcoded approximate GRCh38 centromere
-  coordinates - verify against UCSC's `cytoBand`/`gap` tables before any
-  diagnostic use.
-- The paper used SPSS for downstream statistics (Z-scores, Cox models
-  for survival); this repo only reproduces the FASTQ -> aneuploidy-score
-  computation, not the clinical/survival analysis in the paper.
+Each has its own `config/`, `scripts/`, `resources/`, `tests/`, and
+`README.md` - they can be copied/deployed independently of one another.
