@@ -27,10 +27,12 @@ curl -fsSL \
   -o "$TMP/rmsk.txt.gz"
 
 echo "Filtering for LINE/L1 repeat family and writing BED..." >&2
-# rmsk.txt columns (0-based): 5=genoName 6=genoStart 7=genoEnd 9=strand
-# 10=repName 11=repClass 12=repFamily
+# rmsk.txt columns (1-based): 6=genoName 7=genoStart 8=genoEnd 10=strand
+# 11=repName 12=repClass (e.g. "LINE") 13=repFamily (e.g. "L1", "L2", "CR1")
+# - filtering must be on repFamily ($13), not repClass ($12): repClass groups
+# all LINEs together, repFamily is what actually says "L1" vs. other LINEs.
 zcat "$TMP/rmsk.txt.gz" \
-  | awk -F'\t' 'BEGIN{OFS="\t"} $12=="L1" {print $6, $7, $8, $11, 0, $10}' \
+  | awk -F'\t' 'BEGIN{OFS="\t"} $13=="L1" {print $6, $7, $8, $11, 0, $10}' \
   | sort -k1,1 -k2,2n \
   > "$OUT"
 
