@@ -3,7 +3,15 @@
 # to scripts/run_pipeline.sh / the individual scripts with --config.
 
 reference:
-  # bwa-indexed reference genome (run `bwa index genome.fa` once)
+  # bwa index PREFIX (the path you'd pass to `bwa mem`), not necessarily a
+  # literal .fasta file - bwa mem only needs prefix.{amb,ann,bwt,pac,sa}
+  # (+.alt if present), so an existing site-wide/HPC-shared index works
+  # directly, e.g. an iGenomes GATK GRCh38 BWAIndex:
+  #   /path/to/BWAIndex/Homo_sapiens_assembly38.fasta.64
+  # Otherwise, run `bwa index genome.fa` once and point this at genome.fa.
+  # Either way, make sure its contig naming (chr1, chr2, ... vs 1, 2, ...)
+  # matches resources/chrom_arms.hg38.bed and line1_bed below - GATK's
+  # GRCh38 bundle uses "chr"-prefixed names, matching this repo's BEDs.
   fasta: resources/genome.fa
   # Chromosome-arm coordinates, see resources/build_chrom_arms_bed.py
   chrom_arms_bed: resources/chrom_arms.hg38.bed

@@ -1,6 +1,10 @@
 # Configuration for the WALDO-style within-sample aneuploidy pipeline.
 
 reference:
+  # bwa index PREFIX (the path you'd pass to `bwa mem`), not necessarily a
+  # literal .fasta file - an existing site-wide/HPC-shared index (e.g. an
+  # iGenomes GATK GRCh38 BWAIndex: .../BWAIndex/Homo_sapiens_assembly38.fasta.64)
+  # works directly. See ../mfast-seqs/config/config.yaml for the same note.
   fasta: resources/genome.fa
   chrom_arms_bed: resources/chrom_arms.hg38.bed
   line1_bed: resources/line1_elements.hg38.bed
