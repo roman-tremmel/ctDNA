@@ -60,10 +60,12 @@ Python 3 packages: `numpy`, `pandas`, `scipy`, `pyyaml`
    ```bash
    resources/build_line1_bed.sh resources/line1_elements.hg38.bed
    ```
-4. Copy `config/config.yaml`, point it at your reference/BED files, and
-   fill in your assay's real LINE-1 primer sequence
-   (`primer.forward_seq`) — this is assay-specific and intentionally
-   left as a placeholder here.
+4. Copy `config/config.yaml` and point it at your reference/BED files.
+   `primer.forward_seq` is pre-filled with the LINE-1-specific primer
+   core extracted from Verschoor et al. 2023 Supplementary Table 1
+   ("Primers for mFAST-SeqS") - see
+   `resources/primers_supplementary_table1.tsv` for the full table and
+   derivation. If your own assay uses a different primer, replace it.
 
 ## Running on an air-gapped / offline HPC cluster
 
@@ -150,9 +152,11 @@ it's a toy genome, not a clinical validation.
 
 ## Key methodological differences from the published assay
 
-- The published assay's exact LINE-1 primer sequence and error
-  tolerances (Supplementary Table 1) are not reproduced here; you must
-  supply your own validated primer.
+- The LINE-1 forward-primer core (`ACACAGGGAGGGGAACAT`) is extracted
+  directly from Verschoor et al. 2023 Supplementary Table 1 (see
+  `resources/primers_supplementary_table1.tsv`); the index/adapter
+  primer portions are also transcribed there for reference, though this
+  pipeline only needs the LINE-1-specific core for trimming.
 - Chromosome-arm boundaries are hardcoded approximate GRCh38 centromere
   coordinates - verify against UCSC's `cytoBand`/`gap` tables before any
   diagnostic use.

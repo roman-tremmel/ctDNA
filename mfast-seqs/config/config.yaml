@@ -11,16 +11,20 @@ reference:
   line1_bed: resources/line1_elements.hg38.bed
 
 primer:
-  # LINE-1 locus-specific forward primer used in PCR1. This is assay-specific
-  # (see the assay's own supplementary methods / Belic et al. 2016) and is
-  # NOT reproduced here - fill in your real primer sequence before running.
-  forward_seq: "REPLACE_WITH_REAL_L1_PRIMER_SEQUENCE"
-  # Fadrosh et al. 2014 dual-indexing heterogeneity spacer: a random-length
-  # run of bases inserted between the sequencing adapter/index and the
+  # LINE-1 locus-specific forward primer core, extracted from Verschoor
+  # et al. 2023 Supplementary Table 1 ("Primers for mFAST-SeqS"): all 8
+  # forward-primer spacer-length variants share this sequence as their
+  # 3' (right-anchored) end - see resources/primers_supplementary_table1.tsv
+  # for the full table and derivation.
+  forward_seq: "ACACAGGGAGGGGAACAT"
+  # Fadrosh et al. 2014-style heterogeneity spacer: a variable-length run
+  # of bases (here: genomic 5' extensions of the primer, not random N's -
+  # see resources/primers_supplementary_table1.tsv) inserted before the
   # locus-specific primer to increase base diversity for low-complexity
-  # amplicon libraries on Illumina instruments.
+  # amplicon libraries on Illumina instruments. Observed spacer lengths in
+  # Supplementary Table 1: 0, 2, 3, 4, 5, 6, 7, 8 nt.
   spacer_min_len: 0
-  spacer_max_len: 7
+  spacer_max_len: 8
   # cutadapt error tolerance when locating the primer (fraction of primer length)
   max_error_rate: 0.15
 

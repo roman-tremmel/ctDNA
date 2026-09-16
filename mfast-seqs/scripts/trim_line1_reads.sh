@@ -2,7 +2,7 @@
 # Strip the heterogeneity spacer (Fadrosh et al. 2014 dual-indexing scheme)
 # and the LINE-1 locus-specific primer from raw mFAST-SeqS reads.
 #
-# Reads look like:  [0-7 random bases][fixed L1 primer][biological insert]
+# Reads look like:  [0-8 bases: spacer][fixed L1 primer][biological insert]
 # cutadapt's non-anchored 5' adapter mode (-g) finds the primer wherever it
 # sits and removes it plus everything preceding it, which is exactly the
 # standard trick for removing heterogeneity spacers in amplicon protocols.

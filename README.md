@@ -21,27 +21,35 @@ comparison is more sensitive to batch effects.
 
 ## [`waldo/`](waldo/README.md)
 
-An original reimplementation of the *ideas* behind **WALDO**
-(Douville et al. 2018, *PNAS* 115(8):1871-1876): genome divided into
-500kb windows, windows grouped into clusters that behave similarly
-across a reference panel, and a **within-sample** test - a window's
-expected reads are predicted from the *same test sample's* own reads in
-its cluster, so a global depth/batch shift cancels out. Also includes an
-optional SVM layer for classifying genome-wide aneuploidy status from
+Reimplements **WALDO** (Douville et al. 2018, *PNAS* 115(8):1871-1876)
+following its SI Appendix, SI Materials and Methods: genome divided into
+500kb windows, each window's cluster = other windows on *different*
+chromosomes that are statistically indistinguishable from it (paired
+t-test + F-test) across a reference panel, and a **within-sample** test
+- each window's cluster mean/variance are estimated from the *same test
+sample's own* values at its cluster members (with iterative outlier
+trimming), so a global depth/batch shift cancels out and no arm's own
+windows can ever make up its whole comparison group. A significance
+threshold is calibrated empirically from a reference panel (max/min
+observed Z + margin, per the paper) rather than assumed. Also includes
+an optional SVM layer for classifying genome-wide aneuploidy status from
 per-arm Z-scores (useful for low-tumor-fraction samples where no single
-arm reaches significance). More complex, more tunable, and - since the
-paper's exact statistical model is only in an SI Appendix that wasn't
-available while building this - an approximation of the published
-method rather than a byte-exact reproduction. See `waldo/README.md`'s
-"Known limitations" before trusting its output.
+arm reaches significance). More complex, more tunable, and - since some
+of the SI's phrasing is genuinely ambiguous on one point (see
+`waldo/README.md`'s "An acknowledged ambiguity") - not guaranteed to be
+byte-exact, but built directly from the published methods text rather
+than approximated from the main-text summary alone. See
+`waldo/README.md`'s "Known limitations" before trusting its output.
 
 ## Method comparison
 
 | | mfast-seqs/ | waldo/ |
 |---|---|---|
-| Resolution | Chromosome arm | 500kb windows -> clusters -> arm |
-| Normalization | Between-sample vs. panel-of-normals | Within-sample vs. own cluster totals |
+| Resolution | Chromosome arm | 500kb windows -> per-window clusters -> arm |
+| Normalization | Between-sample vs. panel-of-normals | Within-sample: test sample's own values at its clusters' member windows |
+| Cluster membership | N/A | Reference-panel paired t-test + F-test, restricted to other chromosomes |
 | Batch-effect robustness | Lower | Higher (by design) |
+| Significance threshold | Fixed literature cutoff (5.0) | Empirically calibrated per arm from a reference panel (max/min Z + margin) |
 | Statistics | Sum of squared arm Z-scores -> 1 score | Per-arm Z-test + optional SVM classifier |
 | Extra signals | None | (Not implemented here) allelic imbalance, sample fingerprinting, somatic mutations/MSI - see `waldo/README.md` |
 | Validated sensitivity | Score >=5 tracks VAF >=5-10% (pre-screening / moderate-to-high ctDNA) | Down to ~1% neoplastic fraction at 99% specificity (SVM, per the paper) |

@@ -1,85 +1,41 @@
 #!/usr/bin/env python3
-"""Learn window clusters and a within-sample reference baseline from a
-panel of euploid reference samples.
+"""Learn per-window cluster membership from a euploid reference panel,
+following the algorithm described in Douville et al. 2018 (PNAS
+115(8):1871-1876) SI Appendix, SI Materials and Methods ("Sample
+alignment and genomic interval grouping"):
 
-This is an original, good-faith reimplementation of the *idea* behind
-Douville et al. 2018 (PNAS 115(8):1871-1876) - "group the 500-kb intervals
-with similar read depths into clusters" - not a byte-exact reproduction:
-the paper's precise clustering algorithm and statistical model are in its
-SI Appendix, which is not available here. See waldo/README.md for the
-exact approximation this script makes and why.
+  For each 500-kb genomic interval i, compare its normalized read counts
+  across the reference panel to every other interval i' that lies on a
+  DIFFERENT chromosome. If the two intervals' read-count vectors are not
+  significantly different in mean (paired t-test, p > --mean-p-threshold)
+  AND not significantly different in variance (F-test, p >
+  --var-p-threshold), interval i' is added to interval i's cluster C_i.
 
-Approach:
-  1. From N euploid reference samples, build a windows x samples matrix of
-     LINE-1 read fractions (normalized to each sample's total usable reads).
-  2. Cluster windows by how correlated their fractions are across the
-     reference panel (hierarchical clustering on 1 - Pearson correlation).
-     Windows that track together are assumed to share local amplification
-     efficiency (GC content, primer accessibility, etc.) - the same
-     rationale the paper gives for why some genomic intervals "track
-     together."
-  3. Within EACH reference sample, compute each window's share of its own
-     cluster's total reads (a within-sample ratio, immune to between-run
-     depth/batch differences). Store the mean/SD of that ratio per window
-     across the reference panel - this is the baseline a test sample's
-     own within-sample ratios get compared against in call_aneuploidy.py.
+This yields one (typically large, ~200-window in the paper) cluster PER
+WINDOW, not a fixed number of mutually-exclusive clusters - a window's
+cluster membership is a personalized "these windows behave like me"
+neighbor list. Restricting candidates to other chromosomes is
+deliberate (per the SI text: "compared ... to ... all other genomic
+intervals i' that occurred on the remaining 21 autosomal chromosomes")
+and is what guarantees a chromosome arm's own windows can never make up
+an entire cluster - see call_aneuploidy.py, which uses these clusters
+for a within-sample test that would otherwise be blind to an arm
+affecting its own cluster.
 
-Usage:
-    build_window_clusters.py \
-        --counts control1.window_counts.tsv control2.window_counts.tsv ... \
-        --n-clusters 40 \
-        --out-clusters clusters.tsv \
-        --out-baseline window_baseline.tsv
+With only a handful of reference samples (paper uses 7), the t/F-tests
+have low power, so "not significantly different" is a lenient bar and
+clusters end up large - this matches the paper's own reported ~200
+windows/cluster and is expected behavior, not a bug.
+
+Output: a long-format TSV `window_id  member_id` (one row per
+membership edge), consumed by call_aneuploidy.py.
 """
 import argparse
-import subprocess
 import sys
-import tempfile
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import fcluster, linkage
-from scipy.spatial.distance import squareform
-
-
-def warn_about_arm_pure_clusters(clusters_out, arms_bed):
-    """A cluster whose windows all map to the SAME chromosome arm cannot
-    provide any evidence about that arm's aneuploidy status: in
-    call_aneuploidy.py, a cluster's expected-vs-actual reads always sum to
-    exactly zero net deviation across the windows that make it up (the
-    reference ratios sum to 1 by construction), so if a cluster IS one
-    arm, that arm's "expected" total is forced to equal its own "actual"
-    total. Clusters need to span multiple arms to be informative.
-    """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        windows_path = Path(tmpdir) / "windows.bed"
-        clusters_out.reset_index()[["chrom", "start", "end", "window_id"]].to_csv(
-            windows_path, sep="\t", header=False, index=False
-        )
-        out_path = Path(tmpdir) / "window_arm.bed"
-        with open(out_path, "w") as out:
-            subprocess.run(
-                ["bedtools", "intersect", "-wa", "-wb", "-f", "0.5",
-                 "-a", str(windows_path), "-b", arms_bed],
-                check=True, stdout=out,
-            )
-        rows = []
-        with open(out_path) as fh:
-            for line in fh:
-                fields = line.rstrip("\n").split("\t")
-                rows.append((fields[3], fields[7]))
-    window_arm = pd.DataFrame(rows, columns=["window_id", "arm"]).drop_duplicates("window_id")
-    merged = clusters_out.reset_index().merge(window_arm, on="window_id", how="inner")
-    merged = merged[merged["cluster_id"] != -1]
-    n_arms_per_cluster = merged.groupby("cluster_id")["arm"].nunique()
-    pure_clusters = n_arms_per_cluster[n_arms_per_cluster == 1].index
-    if len(pure_clusters):
-        print(f"WARNING: {len(pure_clusters)} cluster(s) are fully contained within a "
-              f"single chromosome arm (cluster_id(s): {list(pure_clusters)}) and will "
-              "carry no evidence about that arm's aneuploidy status. Consider using "
-              "fewer clusters (larger, more likely to span multiple arms) or a larger "
-              "reference panel.", file=sys.stderr)
+from scipy import stats
 
 
 def main():
@@ -87,19 +43,18 @@ def main():
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--counts", nargs="+", required=True,
                      help="window_counts.tsv files from count_reads_by_window.py, "
-                          "one per euploid reference sample")
-    ap.add_argument("--n-clusters", type=int, default=40)
+                          "one per euploid reference sample (paper found 7 sufficient)")
+    ap.add_argument("--mean-p-threshold", type=float, default=0.05,
+                     help="paired t-test p-value above which two windows' means "
+                          "are considered indistinguishable")
+    ap.add_argument("--var-p-threshold", type=float, default=0.05,
+                     help="F-test p-value above which two windows' variances "
+                          "are considered indistinguishable")
     ap.add_argument("--min-mean-fraction", type=float, default=1e-6,
                      help="windows with a lower mean normalized fraction across "
                           "references are treated as too sparsely covered by "
                           "LINE-1 reads (e.g. centromeric gaps) and excluded")
-    ap.add_argument("--out-clusters", required=True)
-    ap.add_argument("--out-baseline", required=True)
-    ap.add_argument("--arms-bed",
-                     help="optional: chrom_arms BED, used only to warn about clusters "
-                          "that end up fully contained within a single chromosome arm "
-                          "(such a cluster is structurally blind to that arm's "
-                          "aneuploidy status - see waldo/README.md)")
+    ap.add_argument("--out", required=True, help="output long-format membership TSV")
     args = ap.parse_args()
 
     frames = []
@@ -107,74 +62,80 @@ def main():
     for path in args.counts:
         df = pd.read_csv(path, sep="\t")
         if meta is None:
-            meta = df[["window_id", "chrom", "start", "end"]].set_index("window_id")
+            meta = df[["window_id", "chrom"]].set_index("window_id")
         frames.append(df.set_index("window_id")["normalized_fraction"].rename(path))
 
     matrix = pd.concat(frames, axis=1)  # windows x samples
     n_samples = matrix.shape[1]
-    if n_samples < 5:
-        print(f"WARNING: only {n_samples} reference samples given; correlation-based "
-              "window clustering is unreliable with this few replicates. The paper's "
-              "own description implies a much larger reference panel used once to "
-              "define clusters. Treat cluster assignments here as provisional.",
-              file=sys.stderr)
+    if n_samples < 7:
+        print(f"WARNING: only {n_samples} reference samples given; the paper found "
+              "7 to be sufficient for stable clustering (more did not help). Fewer "
+              "than that gives the t/F-tests very low power, which will make "
+              "clusters unusually large (almost everything looks 'not "
+              "significantly different').", file=sys.stderr)
 
     mean_fraction = matrix.mean(axis=1)
-    included_windows = mean_fraction[mean_fraction >= args.min_mean_fraction].index
-    excluded_windows = mean_fraction.index.difference(included_windows)
-    print(f"{len(excluded_windows)} / {len(mean_fraction)} windows excluded "
-          f"(mean normalized fraction < {args.min_mean_fraction}, likely no "
-          "LINE-1 coverage - gaps/centromeres/telomeres)", file=sys.stderr)
+    included = mean_fraction[mean_fraction >= args.min_mean_fraction].index
+    excluded = mean_fraction.index.difference(included)
+    print(f"{len(excluded)} / {len(mean_fraction)} windows excluded "
+          f"(mean normalized fraction < {args.min_mean_fraction})", file=sys.stderr)
 
-    sub = matrix.loc[included_windows]
+    sub = matrix.loc[included]
+    chrom = meta.loc[included, "chrom"]
+    X = sub.to_numpy()  # (n_windows, n_samples)
+    window_ids = sub.index.to_numpy()
+    chroms = chrom.to_numpy()
+    n, m = X.shape
+    df_t = m - 1
 
-    # Correlate windows' fraction profiles across the reference panel.
-    corr = sub.T.corr()
-    corr = corr.fillna(0.0)
-    dist = 1.0 - corr.values
-    np.fill_diagonal(dist, 0.0)
-    dist = (dist + dist.T) / 2  # enforce exact symmetry against float noise
-    condensed = squareform(dist, checks=False)
+    mean = X.mean(axis=1)
+    var = X.var(axis=1, ddof=1)
 
-    n_clusters = min(args.n_clusters, len(included_windows))
-    Z = linkage(condensed, method="average")
-    cluster_ids = fcluster(Z, t=n_clusters, criterion="maxclust")
+    with open(args.out, "w") as out:
+        out.write("window_id\tmember_id\n")
+        for i in range(n):
+            diffs = X - X[i][None, :]  # (n, m): paired differences vs window i
+            mean_diff = diffs.mean(axis=1)
+            sd_diff = diffs.std(axis=1, ddof=1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t_stat = mean_diff / (sd_diff / np.sqrt(m))
+            p_mean = np.where(
+                sd_diff > 0,
+                2 * stats.t.sf(np.abs(t_stat), df_t),
+                np.where(mean_diff == 0, 1.0, 0.0),
+            )
 
-    clusters = pd.Series(cluster_ids, index=included_windows, name="cluster_id")
+            with np.errstate(divide="ignore", invalid="ignore"):
+                F = var / var[i]
+            lower_tail = stats.f.cdf(F, df_t, df_t)
+            p_var = np.where(
+                var[i] > 0,
+                2 * np.minimum(lower_tail, 1 - lower_tail),
+                np.where(var == 0, 1.0, 0.0),
+            )
 
-    # Within-sample ratio: each window's share of its own cluster's total
-    # reads, computed independently in each reference sample.
-    ratio_frames = []
-    for col in sub.columns:
-        sample_fracs = sub[col]
-        cluster_totals = sample_fracs.groupby(clusters).transform("sum")
-        ratio = (sample_fracs / cluster_totals.replace(0, np.nan)).rename(col)
-        ratio_frames.append(ratio)
-    ratios = pd.concat(ratio_frames, axis=1)
+            candidate = (chroms != chroms[i]) & (p_mean > args.mean_p_threshold) \
+                & (p_var > args.var_p_threshold)
+            candidate[i] = False
 
-    baseline = pd.DataFrame({
-        "cluster_id": clusters,
-        "ref_mean_ratio": ratios.mean(axis=1),
-        "ref_sd_ratio": ratios.std(axis=1, ddof=1),
-        "n_ref_samples": ratios.count(axis=1),
-    })
-    baseline = baseline.join(meta)
+            members = window_ids[candidate]
+            for member_id in members:
+                out.write(f"{window_ids[i]}\t{member_id}\n")
 
-    clusters_out = meta.loc[included_windows].copy()
-    clusters_out["cluster_id"] = clusters
-    excl_out = meta.loc[excluded_windows].copy()
-    excl_out["cluster_id"] = -1
-    clusters_out = pd.concat([clusters_out, excl_out]).sort_index()
+            if (i + 1) % 500 == 0 or i + 1 == n:
+                print(f"  ...processed {i + 1}/{n} windows", file=sys.stderr)
 
-    if args.arms_bed:
-        warn_about_arm_pure_clusters(clusters_out, args.arms_bed)
-
-    clusters_out.to_csv(args.out_clusters, sep="\t", index_label="window_id")
-    baseline.to_csv(args.out_baseline, sep="\t", index_label="window_id")
-
-    print(f"Wrote {n_clusters} clusters over {len(included_windows)} windows to "
-          f"{args.out_clusters}", file=sys.stderr)
-    print(f"Wrote per-window baseline ratios to {args.out_baseline}", file=sys.stderr)
+    sizes = pd.read_csv(args.out, sep="\t").groupby("window_id").size()
+    empty = len(included) - len(sizes)
+    print(f"Wrote cluster memberships for {len(included)} windows to {args.out}",
+          file=sys.stderr)
+    if len(sizes):
+        print(f"Cluster size: mean={sizes.mean():.1f}, median={sizes.median():.0f}, "
+              f"min={sizes.min()}, max={sizes.max()}", file=sys.stderr)
+    if empty:
+        print(f"WARNING: {empty} window(s) got an empty cluster (no other-chromosome "
+              "window passed both equivalence tests) and will be excluded from "
+              "call_aneuploidy.py's arm test.", file=sys.stderr)
 
 
 if __name__ == "__main__":

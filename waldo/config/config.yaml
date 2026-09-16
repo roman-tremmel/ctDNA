@@ -8,11 +8,18 @@ reference:
   windows_bed: resources/windows.500kb.hg38.bed
 
 primer:
-  # Same LINE-1 assay chemistry as mfast-seqs/ (FAST-SeqS, Kinde et al. 2012) -
-  # fill in your real primer sequence.
-  forward_seq: "REPLACE_WITH_REAL_L1_PRIMER_SEQUENCE"
+  # Same LINE-1 assay family as mfast-seqs/ (FAST-SeqS, Kinde et al. 2012).
+  # Defaulted here to the LINE-1-specific core extracted from Verschoor
+  # et al. 2023 Supplementary Table 1 (see
+  # resources/primers_supplementary_table1.tsv) - the "modified FAST-SeqS"
+  # variant. Douville et al. 2018 (the WALDO paper) cite using their own
+  # previously-described primers (Kinde et al. 2012) amplifying ~38,000
+  # LINE-1 loci; that paper's own Supplementary primer sequence was not
+  # available while building this and may differ from the value below -
+  # replace it if/when you have WALDO's own primer sequence confirmed.
+  forward_seq: "ACACAGGGAGGGGAACAT"
   spacer_min_len: 0
-  spacer_max_len: 7
+  spacer_max_len: 8
   max_error_rate: 0.15
 
 alignment:
@@ -24,13 +31,21 @@ qc:
   min_total_reads: 20000
 
 clustering:
-  # Number of window clusters to learn from the euploid reference panel.
-  # Windows are grouped by how correlated their normalized read fractions
-  # are across reference samples (a stand-in for Douville et al.'s
-  # "genomic intervals with similar read depths" - see waldo/README.md
-  # for why this differs from the paper's undisclosed exact method).
-  n_clusters: 40
-  min_reference_samples: 10
+  # Per Douville et al. 2018 SI Methods: a window's cluster = other
+  # windows (on DIFFERENT chromosomes) whose reference-panel read depth
+  # is not significantly different in mean (paired t-test) or variance
+  # (F-test). The paper found 7 reference samples sufficient.
+  mean_p_threshold: 0.05
+  var_p_threshold: 0.05
+  min_reference_samples: 7
+
+calibration:
+  # Outlier trimming when estimating each window's within-sample cluster
+  # mean/variance (call_aneuploidy.py), and the margin added to a
+  # reference panel's observed max/min Z when calibrating per-arm
+  # thresholds (calibrate_threshold.py) - both values as used in the paper.
+  outlier_p_threshold: 0.01
+  margin: 4.0
 
 excluded_arms:
   - chr13p
@@ -42,5 +57,6 @@ excluded_arms:
   - chrYq
 
 score:
-  # |Z| threshold for calling an individual chromosome arm gained/lost
+  # Fallback flat |Z| cutoff if you haven't run calibrate_threshold.py yet.
+  # Prefer a calibrated per-arm threshold table - see waldo/README.md.
   arm_z_cutoff: 3.0
