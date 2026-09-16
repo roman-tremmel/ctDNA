@@ -1,0 +1,9 @@
+resources/genome.fa*
+resources/line1_elements*.bed
+results/
+*.bam
+*.bai
+*.fastq
+*.fastq.gz
+__pycache__/
+*.pyc
