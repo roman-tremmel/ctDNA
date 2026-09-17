@@ -14,7 +14,7 @@
 # "Nothing is ever written inside the git clone") - always pass explicit
 # --output/--error pointing at your external $RUNDIR. And --export=ALL
 # is NOT optional: SLURM does not reliably hand a submitting shell's
-# exported variables ($CONDA_ROOT below) to the job on every cluster's
+# exported variables ($CONDA_ROOT, $CONDA_ENV_PATH) to the job on every cluster's
 # configuration - without it, this script silently falls back to its
 # hardcoded default ($HOME/miniforge3) and fails if your install is
 # anywhere else. Full example:
@@ -22,7 +22,7 @@
 #   mkdir -p "$RUNDIR"/logs
 #   "$REPO/waldo/scripts/make_sample_sheet.sh" /path/to/fastq_dir > "$RUNDIR/samples.tsv"
 #   sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
-#     --export=ALL,CONDA_ROOT="$CONDA_ROOT" \
+#     --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
 #     --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
 #     "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
 #     "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml" \

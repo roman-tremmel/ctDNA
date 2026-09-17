@@ -213,6 +213,15 @@ bash Miniforge3.sh -b -p "$CONDA_ROOT"
 source "$CONDA_ROOT/etc/profile.d/conda.sh"
 mamba env create -f "$REPO/environment.yml"
 conda activate ctdna-aneuploidy
+
+# Find the env's ACTUAL full path and note it too - you need this exact
+# value for every sbatch call in step 4. Don't assume it's under
+# $CONDA_ROOT/envs/: env managers (especially a standalone `mamba`
+# binary, as opposed to one bundled with conda/miniconda) often default
+# to a DIFFERENT root prefix, e.g. ~/.local/share/mamba/envs/.
+conda env list | grep ctdna-aneuploidy
+export CONDA_ENV_PATH="$(conda env list | awk '/ctdna-aneuploidy/ {print $NF}')"
+echo "CONDA_ENV_PATH=$CONDA_ENV_PATH"   # sanity-check this isn't empty
 ```
 
 If Miniforge is already installed on your cluster, set `CONDA_ROOT` to
@@ -267,7 +276,7 @@ Edit `$RUNDIR/config.yaml` (never the tracked `config.example.yaml`):
 ```bash
 "$REPO/waldo/scripts/make_sample_sheet.sh" /path/to/your/fastq_dir > "$RUNDIR/samples.tsv"
 sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
-  --export=ALL,CONDA_ROOT="$CONDA_ROOT" \
+  --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
   --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
   "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
   "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml" \
@@ -277,33 +286,27 @@ sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
 (Or without SLURM, one sample at a time:
 `"$REPO/waldo/scripts/run_pipeline.sh" <sample> <fastq> "$RUNDIR/results/<sample>" "$RUNDIR/config.yaml"`.)
 
-**The final `"$REPO/waldo/scripts"` argument is also not optional.**
-SLURM copies a submitted script into a per-job spool directory
-(`/var/spool/slurmd/...`) and runs that copy, so
-`run_pipeline_array.sbatch` can't reliably find `run_pipeline.sh` next
-to itself at runtime - it fails with something like
-`.../run_pipeline.sh: No such file or directory` if this 4th argument
-is missing, since it would otherwise be looking in the spool directory
-instead of your git clone.
+**Neither `--export=...` nor the final `"$REPO/waldo/scripts"`
+argument is optional** - both are load-bearing, not just-in-case:
 
-**The `--export=ALL,CONDA_ROOT="$CONDA_ROOT"` is not optional.** SLURM
-does not reliably hand a submitting shell's exported variables to the
-job on every cluster's configuration - `run_pipeline_array.sbatch`
-reads `$CONDA_ROOT` to find and activate the conda env by full path
-(`$CONDA_ROOT/envs/ctdna-aneuploidy`), and without it explicitly
-exported on the `sbatch` command line, the job falls back to the
-hardcoded default `$HOME/miniforge3` and fails with e.g.
-`.../miniforge3/etc/profile.d/conda.sh: No such file or directory` if
-your install lives anywhere else. If your env itself isn't at the
-default `$CONDA_ROOT/envs/ctdna-aneuploidy` subpath, override that
-directly instead: add `,CONDA_ENV_PATH=/full/path/to/envs/your-env` to
-the same `--export` list. A common case: a standalone `mamba` binary
-(separate from a `conda`/`miniconda3` install) defaults to its own root
-prefix at `~/.local/share/mamba` and creates envs under
-`~/.local/share/mamba/envs/`, not under your `conda`'s own `envs/` -
-check with `conda env list` if unsure where an env actually landed.
-`CONDA_ROOT` only needs to point at *some* working conda installation
-to source its `conda.sh` hook; `CONDA_ENV_PATH` can point anywhere.
+- `CONDA_ROOT`/`CONDA_ENV_PATH`: SLURM does not reliably hand a
+  submitting shell's exported variables to the job on every cluster's
+  configuration, so without passing them explicitly via `--export`,
+  `run_pipeline_array.sbatch` falls back to hardcoded defaults
+  (`$HOME/miniforge3` and `$CONDA_ROOT/envs/ctdna-aneuploidy`) and
+  fails - either with `.../conda.sh: No such file or directory` (wrong
+  `CONDA_ROOT`) or `libmamba ... Cannot activate, prefix does not exist`
+  (env isn't actually under `$CONDA_ROOT/envs/`, e.g. because a
+  standalone `mamba` binary, separate from a `conda`/`miniconda3`
+  install, defaults to its own root prefix at `~/.local/share/mamba`).
+  Step 1 above has you determine and export the real `$CONDA_ENV_PATH`
+  for exactly this reason - use that value here, don't skip it because
+  the flag "looks like" it should be optional.
+- The `scripts` argument: SLURM copies a submitted script into a
+  per-job spool directory (`/var/spool/slurmd/...`) and runs that copy,
+  so `run_pipeline_array.sbatch` can't reliably find `run_pipeline.sh`
+  next to itself at runtime - it fails with
+  `.../run_pipeline.sh: No such file or directory` without it.
 
 This produces `$RUNDIR/results/<sample>/<sample>.window_counts.tsv` for
 every sample.
