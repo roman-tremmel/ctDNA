@@ -270,11 +270,21 @@ sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
   --export=ALL,CONDA_ROOT="$CONDA_ROOT" \
   --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
   "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
-  "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
+  "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml" \
+  "$REPO/waldo/scripts"
 ```
 
 (Or without SLURM, one sample at a time:
 `"$REPO/waldo/scripts/run_pipeline.sh" <sample> <fastq> "$RUNDIR/results/<sample>" "$RUNDIR/config.yaml"`.)
+
+**The final `"$REPO/waldo/scripts"` argument is also not optional.**
+SLURM copies a submitted script into a per-job spool directory
+(`/var/spool/slurmd/...`) and runs that copy, so
+`run_pipeline_array.sbatch` can't reliably find `run_pipeline.sh` next
+to itself at runtime - it fails with something like
+`.../run_pipeline.sh: No such file or directory` if this 4th argument
+is missing, since it would otherwise be looking in the spool directory
+instead of your git clone.
 
 **The `--export=ALL,CONDA_ROOT="$CONDA_ROOT"` is not optional.** SLURM
 does not reliably hand a submitting shell's exported variables to the

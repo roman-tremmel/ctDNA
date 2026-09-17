@@ -25,7 +25,14 @@
 #     --export=ALL,CONDA_ROOT="$CONDA_ROOT" \
 #     --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
 #     "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
-#     "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
+#     "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml" \
+#     "$REPO/waldo/scripts"
+#
+# The 4th argument (this script's own scripts/ directory) is required,
+# not optional: SLURM copies a submitted script into a per-job spool
+# directory (/var/spool/slurmd/...) and runs THAT copy, so this script
+# can't reliably find run_pipeline.sh next to itself via $0/BASH_SOURCE -
+# that would resolve to the spool directory, not your git clone.
 #
 # See ../README.md "How to run" for the full sequence.
 #
@@ -47,7 +54,12 @@ CONDA_ENV_PATH="${CONDA_ENV_PATH:-$CONDA_ROOT/envs/$CONDA_ENV_NAME}"
 SAMPLE_SHEET="$1"
 OUTDIR_ROOT="$2"
 CONFIG="$3"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$4"
+if [[ -z "$SCRIPT_DIR" || ! -x "$SCRIPT_DIR/run_pipeline.sh" ]]; then
+  echo "ERROR: 4th argument must be the waldo/scripts directory (got '$SCRIPT_DIR')" >&2
+  echo "e.g. sbatch ... run_pipeline_array.sbatch samples.tsv results config.yaml \"\$REPO/waldo/scripts\"" >&2
+  exit 1
+fi
 
 # Activate the conda env. NOTE: deliberately no `set -u` above - conda's
 # own activation scripts reference unset variables internally and abort
