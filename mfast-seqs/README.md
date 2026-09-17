@@ -249,15 +249,28 @@ sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
 (The `control_*` glob is why step 4 has you prefix control samples'
 names with a group label - adjust the glob if you used a different label.)
 
-**6. Score each case sample against that baseline:**
+**6. Score every sample against that baseline:**
+
+Same array-over-`samples.tsv` pattern as step 4, not a one-sample-at-a-time
+manual substitution - `score_samples_array.sbatch` reads each row (honoring
+the same group-prefix as step 4) and scores it:
 
 ```bash
-sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
-  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
-  "$REPO/mfast-seqs/scripts/run_step.sbatch" \
-  python3 "$REPO/mfast-seqs/scripts/compute_aneuploidy_score.py" \
-  --counts "$RUNDIR/results/<sample>/<sample>.arm_counts.tsv" \
-  --baseline "$RUNDIR/results/baseline.tsv" \
-  --cutoff 5.0 \
-  --out "$RUNDIR/results/<sample>.aneuploidy.tsv"
+sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+  --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
+  "$REPO/mfast-seqs/scripts/score_samples_array.sbatch" \
+  "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/results/baseline.tsv" \
+  5.0 "$REPO/mfast-seqs/scripts"
 ```
+
+This produces `$RUNDIR/results/<sample>.aneuploidy.tsv` for every
+sample, controls included - scoring a control against its own baseline
+is a reasonable sanity check (expect a low score), not wasted work. If
+you'd rather only score cases, use a narrower `--array` range that
+excludes the control rows' line numbers in `samples.tsv`.
+
+(For a single ad-hoc sample instead of the whole sheet, use
+`run_step.sbatch` directly with a literal sample name in place of
+`<sample>`:
+`... run_step.sbatch python3 compute_aneuploidy_score.py --counts "$RUNDIR/results/<sample>/<sample>.arm_counts.tsv" --baseline "$RUNDIR/results/baseline.tsv" --cutoff 5.0 --out "$RUNDIR/results/<sample>.aneuploidy.tsv"`.)

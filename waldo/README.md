@@ -371,21 +371,32 @@ sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
   --out "$RUNDIR/results/thresholds.tsv"
 ```
 
-**7. Call per-arm gains/losses for a case sample:**
+**7. Call per-arm gains/losses for every sample:**
+
+Same array-over-`samples.tsv` pattern as step 4, not a one-sample-at-a-time
+manual substitution - `score_samples_array.sbatch` reads each row (honoring
+the same group-prefix as step 4) and scores it:
 
 ```bash
-sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
-  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
-  "$REPO/waldo/scripts/run_step.sbatch" \
-  python3 "$REPO/waldo/scripts/call_aneuploidy.py" \
-  --counts "$RUNDIR/results/<sample>/<sample>.window_counts.tsv" \
-  --clusters "$RUNDIR/results/clusters.tsv" \
-  --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" \
-  --arms-bed "$REPO/waldo/resources/chrom_arms.hg38.bed" \
-  --excluded-arms chr13p chr14p chr15p chr21p chr22p chrYp chrYq \
-  --threshold-table "$RUNDIR/results/thresholds.tsv" \
-  --out "$RUNDIR/results/<sample>.arm_scores.tsv"
+sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+  --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
+  "$REPO/waldo/scripts/score_samples_array.sbatch" \
+  "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/results/clusters.tsv" \
+  "$RUNDIR/results/thresholds.tsv" "$REPO/waldo/resources/windows.500kb.hg38.bed" \
+  "$REPO/waldo/resources/chrom_arms.hg38.bed" "$REPO/waldo/scripts"
 ```
+
+This produces `$RUNDIR/results/<sample>.arm_scores.tsv` for every
+sample, reference samples included - scoring one against its own
+calibration panel is a reasonable sanity check, not wasted work. If
+you'd rather only score cases, use a narrower `--array` range that
+excludes the reference rows' line numbers in `samples.tsv`.
+
+(For a single ad-hoc sample instead of the whole sheet, use
+`run_step.sbatch` directly with a literal sample name in place of
+`<sample>`:
+`... run_step.sbatch python3 call_aneuploidy.py --counts "$RUNDIR/results/<sample>/<sample>.window_counts.tsv" --clusters "$RUNDIR/results/clusters.tsv" --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" --arms-bed "$REPO/waldo/resources/chrom_arms.hg38.bed" --excluded-arms chr13p chr14p chr15p chr21p chr22p chrYp chrYq --threshold-table "$RUNDIR/results/thresholds.tsv" --out "$RUNDIR/results/<sample>.arm_scores.tsv"`.)
 
 **8. Optional: train/apply the SVM genome-wide classifier**, once you
 have labeled samples (per the paper, only meaningful for samples where
