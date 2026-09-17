@@ -181,6 +181,23 @@ Per-sample counting (same pattern as mfast-seqs/):
 scripts/run_pipeline.sh <sample_name> <sample.fastq.gz> results/<sample_name> config/config.yaml
 ```
 
+### Running many samples on a SLURM cluster
+
+Same pattern as `mfast-seqs/` - build a sample sheet, submit an array
+job instead of looping:
+
+```bash
+mkdir -p logs
+scripts/make_sample_sheet.sh /path/to/fastq_dir > samples.tsv   # sample_name<TAB>fastq_path
+sbatch --array=1-$(wc -l < samples.tsv) \
+  scripts/run_pipeline_array.sbatch samples.tsv results config/config.yaml
+```
+
+See `../mfast-seqs/README.md`'s "Running many samples on a SLURM
+cluster" for details on the sample-sheet naming assumptions and how to
+adjust the `.sbatch` file for your cluster's resource requirements and
+conda setup.
+
 Build cluster membership from a panel of euploid reference samples (the
 paper found 7 sufficient; this is the SAME panel used for threshold
 calibration below, matching the paper's own reuse of its 677-WBC panel

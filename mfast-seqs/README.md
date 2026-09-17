@@ -115,6 +115,31 @@ scripts/run_pipeline.sh <sample_name> <sample.fastq.gz> results/<sample_name> co
 
 This produces `results/<sample_name>/<sample_name>.arm_counts.tsv`.
 
+### Running many samples on a SLURM cluster
+
+`run_pipeline.sh` is single-sample by design (it maps cleanly onto one
+array-job task); build a sample sheet and submit an array job instead of
+looping:
+
+```bash
+mkdir -p logs
+scripts/make_sample_sheet.sh /path/to/fastq_dir > samples.tsv   # sample_name<TAB>fastq_path
+sbatch --array=1-$(wc -l < samples.tsv) \
+  scripts/run_pipeline_array.sbatch samples.tsv results config/config.yaml
+```
+
+`make_sample_sheet.sh` expects standard Illumina bcl2fastq single-end
+naming (`<SampleName>_S<N>_L<LLL>_R1_001.fastq.gz`) and extracts the
+sample name automatically; edit the `sed` pattern in that script if your
+naming differs. `run_pipeline_array.sbatch` uses `$SLURM_ARRAY_TASK_ID`
+to pick one row of `samples.tsv` per task - this works identically for
+control and case samples, since they all go through the same
+trim/align/count step; what you do with the resulting
+`<sample>.arm_counts.tsv` files (feed them to `build_control_baseline.py`
+or `compute_aneuploidy_score.py`) happens afterwards, once the whole
+array has finished. Adjust the `#SBATCH` resource lines and the conda
+activation block at the top of the `.sbatch` file for your cluster.
+
 Build a healthy-control baseline from several such control samples
 (more controls = more stable per-arm mean/SD; the paper's assay QC target
 was >=90,000 usable reads/sample):
