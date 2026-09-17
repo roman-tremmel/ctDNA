@@ -86,6 +86,18 @@ That's the entire install - `bwa`, `samtools`, `bedtools`, `cutadapt`
 and all Python dependencies for both pipelines land in one environment
 in under two minutes, no root needed at any step.
 
+## Nothing is ever written inside the git clone
+
+Both `mfast-seqs/config/config.yaml` and `waldo/config/config.yaml`
+don't exist in this repo on purpose - only `config.example.yaml` does.
+**Copy it to an external run directory and edit the copy there**; the
+same goes for the reference genome, the downloaded LINE-1 BED, results,
+logs, and sample sheets. This way `git pull` never fights your local
+setup. Each subproject's README has a complete "How to run" section at
+the bottom with the exact commands
+([`mfast-seqs/README.md`](mfast-seqs/README.md#how-to-run),
+[`waldo/README.md`](waldo/README.md#how-to-run)) - start there.
+
 ## Running on an air-gapped / offline HPC cluster
 
 Neither pipeline's analysis scripts make any network calls - once a
@@ -94,8 +106,9 @@ environment exist locally, everything runs offline. Three things need
 internet at some point, all one-time and all doable on a *different*
 machine than the offline cluster if needed:
 
-1. **The reference genome** (see `mfast-seqs/README.md`'s "Running on
-   an air-gapped / offline HPC cluster" section for exact commands).
+1. **The reference genome** - or reuse an existing site-wide/HPC-shared
+   BWA index (e.g. an iGenomes GATK GRCh38 bundle) and skip this
+   entirely; see either subproject's "How to run" section.
 2. **The LINE-1 element BED**, built from UCSC's RepeatMasker track
    (`resources/build_line1_bed.sh` in either pipeline).
 3. **The conda environment itself**, if even `mamba env create` can't

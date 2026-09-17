@@ -1,6 +1,14 @@
+# Safety nets only - by convention (see README "How to run"), nothing
+# should ever be written inside the repo clone at all. All of this
+# belongs in an external run directory ($RUNDIR), never here.
+**/config/config.yaml
+**/config/*.local.yaml
 **/resources/genome.fa*
 **/resources/line1_elements*.bed
+**/resources/windows.500kb.hg38.bed.local
 **/results/
+**/logs/
+samples.tsv
 *.bam
 *.bai
 *.fastq

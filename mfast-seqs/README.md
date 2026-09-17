@@ -29,136 +29,35 @@ files and reproduces the paper's dry-lab analysis:
 3. **Count** reads per chromosome arm, restricted to reads that overlap
    an annotated LINE-1 locus, normalized to total library size.
 4. **Z-score** each arm's normalized count against a healthy-control
-   panel-of-normals (mean/SD per arm).
+   panel-of-normals (mean/SD per arm) - see "A cohort of healthy
+   controls is required" below.
 5. **Sum the squared Z-scores** over all included arms (excluding the
    acrocentric short arms 13p/14p/15p/21p/22p and chrY, which carry too
    few LINE-1 elements) to get the genome-wide **aneuploidy score**.
 6. Classify against a cutoff (5.0, as used in the paper).
 
+## A cohort of healthy controls is required
+
+The Z-score in step 4 above needs a per-arm mean/SD baseline computed
+from a cohort of healthy control samples (the paper: *"a Z-score per
+chromosome arm was calculated relative to healthy female controls"*) -
+this is a **one-time** cost, not a per-sample one: build the baseline
+once from your control cohort (`build_control_baseline.py`, step 5 in
+"How to run" below), then score any number of individual case samples
+against it independently. Rules of thumb: aim for >=20-30 controls for
+a stable per-arm mean/SD, and process them in the same sequencing
+run/conditions as your case samples where possible - this "between
+sample" comparison is the main way this method is more exposed to
+batch effects than `../waldo/`.
+
 ## Requirements
 
-System tools (install via your package manager or conda/mamba):
-`bwa`, `samtools`, `bedtools`, `cutadapt`.
-
-Python 3 packages: `numpy`, `pandas`, `scipy`, `pyyaml`
-(`pip install -r requirements.txt`).
-
-## Setup
-
-1. Get a reference genome and bwa-index it:
-   ```bash
-   bwa index resources/genome.fa
-   ```
-2. Build the chromosome-arm BED (GRCh38 coordinates included, regenerate
-   with `resources/build_chrom_arms_bed.py` if needed, or adapt for
-   another genome build):
-   ```bash
-   python3 resources/build_chrom_arms_bed.py -o resources/chrom_arms.hg38.bed
-   ```
-3. Build the LINE-1 element BED from the UCSC RepeatMasker track (one-time,
-   ~500 MB download):
-   ```bash
-   resources/build_line1_bed.sh resources/line1_elements.hg38.bed
-   ```
-4. Copy `config/config.yaml` and point it at your reference/BED files.
-   `primer.forward_seq` is pre-filled with the LINE-1-specific primer
-   core extracted from Verschoor et al. 2023 Supplementary Table 1
-   ("Primers for mFAST-SeqS") - see
-   `resources/primers_supplementary_table1.tsv` for the full table and
-   derivation. If your own assay uses a different primer, replace it.
-
-## Running on an air-gapped / offline HPC cluster
-
-Once `resources/genome.fa` (+ bwa index) and `resources/line1_elements.*.bed`
-exist, **none of the pipeline scripts make any network calls** —
-`trim_line1_reads.sh`, `align_reads.sh`, `count_reads_by_arm.py`,
-`build_control_baseline.py` and `compute_aneuploidy_score.py` only read
-local files and call locally installed tools (bwa/samtools/bedtools/
-cutadapt). The only two steps in this repo that need internet access are:
-
-1. Downloading the reference genome.
-2. `resources/build_line1_bed.sh`, which fetches the UCSC RepeatMasker
-   track (`hgdownload.soe.ucsc.edu`).
-
-If your cluster has no outbound internet access, run those two steps on
-any machine that does (your laptop, a login node with general internet,
-etc.), then copy the results over:
-
-```bash
-# on a machine WITH internet access:
-bwa index genome.fa
-resources/build_line1_bed.sh line1_elements.hg38.bed
-
-# transfer to the cluster:
-rsync -avP genome.fa* line1_elements.hg38.bed \
-  cluster:/path/to/ctDNA/resources/
-```
-
-`resources/chrom_arms.hg38.bed` is already committed to this repo, so it
-does not need to be regenerated or transferred separately.
-
-For the software itself, most HPC clusters already provide `bwa`,
-`samtools`, `bedtools`, and `cutadapt` as environment modules
-(`module load ...`); if not, build the `environment.yml` conda
-environment once on a machine with internet and either recreate it on
-the cluster from an internal conda channel/mirror, or ship it with
-`conda-pack` (creates a relocatable, self-contained tarball that needs no
-internet to unpack and activate).
-
-## Running
-
-Per-sample: raw FASTQ -> trimmed -> aligned -> per-arm counts:
-
-```bash
-scripts/run_pipeline.sh <sample_name> <sample.fastq.gz> results/<sample_name> config/config.yaml
-```
-
-This produces `results/<sample_name>/<sample_name>.arm_counts.tsv`.
-
-### Running many samples on a SLURM cluster
-
-`run_pipeline.sh` is single-sample by design (it maps cleanly onto one
-array-job task); build a sample sheet and submit an array job instead of
-looping:
-
-```bash
-mkdir -p logs
-scripts/make_sample_sheet.sh /path/to/fastq_dir > samples.tsv   # sample_name<TAB>fastq_path
-sbatch --array=1-$(wc -l < samples.tsv) \
-  scripts/run_pipeline_array.sbatch samples.tsv results config/config.yaml
-```
-
-`make_sample_sheet.sh` expects standard Illumina bcl2fastq single-end
-naming (`<SampleName>_S<N>_L<LLL>_R1_001.fastq.gz`) and extracts the
-sample name automatically; edit the `sed` pattern in that script if your
-naming differs. `run_pipeline_array.sbatch` uses `$SLURM_ARRAY_TASK_ID`
-to pick one row of `samples.tsv` per task - this works identically for
-control and case samples, since they all go through the same
-trim/align/count step; what you do with the resulting
-`<sample>.arm_counts.tsv` files (feed them to `build_control_baseline.py`
-or `compute_aneuploidy_score.py`) happens afterwards, once the whole
-array has finished. Adjust the `#SBATCH` resource lines and the conda
-activation block at the top of the `.sbatch` file for your cluster.
-
-Build a healthy-control baseline from several such control samples
-(more controls = more stable per-arm mean/SD; the paper's assay QC target
-was >=90,000 usable reads/sample):
-
-```bash
-python3 scripts/build_control_baseline.py \
-  --counts results/control_*/control_*.arm_counts.tsv \
-  --out results/baseline.tsv
-```
-
-Compute the aneuploidy score for a case sample against that baseline:
-
-```bash
-python3 scripts/compute_aneuploidy_score.py \
-  --counts results/<sample_name>/<sample_name>.arm_counts.tsv \
-  --baseline results/baseline.tsv \
-  --cutoff 5.0 \
-  --out results/<sample_name>.aneuploidy.tsv
-```
+System tools: `bwa`, `samtools`, `bedtools`, `cutadapt`. Python 3 with
+`numpy`, `pandas`, `scipy`, `pyyaml`. The easiest way to get all of
+these without root/admin rights is the top-level `../environment.yml`
+conda/mamba environment (covers both pipelines) - see "How to run"
+below. `requirements.txt` here covers just the Python side if you
+already have the system tools some other way.
 
 ## Testing
 
@@ -173,7 +72,8 @@ python3 tests/test_pipeline_synthetic.py
 ```
 
 This validates pipeline *mechanics*, not the real hg38/LINE-1 biology —
-it's a toy genome, not a clinical validation.
+it's a toy genome, not a clinical validation. It's self-contained
+(writes to a temp directory) and needs no setup from "How to run" below.
 
 ## Key methodological differences from the published assay
 
@@ -188,3 +88,99 @@ it's a toy genome, not a clinical validation.
 - The paper used SPSS for downstream statistics (Z-scores, Cox models
   for survival); this repo only reproduces the FASTQ -> aneuploidy-score
   computation, not the clinical/survival analysis in the paper.
+
+## How to run
+
+**Nothing below ever writes inside the git clone.** Everything
+generated (environment, downloaded resources, your `config.yaml`,
+results, logs) goes into an external run directory, so `git pull`
+always stays conflict-free no matter what you've run. Set these two
+variables once per shell session (adjust to your actual paths):
+
+```bash
+export REPO=/path/to/ctDNA        # your git clone (top level, not mfast-seqs/)
+export RUNDIR=/path/to/your/rundir   # anywhere OUTSIDE the git clone
+mkdir -p "$RUNDIR"/{resources,results,logs}
+```
+
+**1. Environment (once per machine, no root needed):**
+
+```bash
+curl -fsSL -o Miniforge3.sh \
+  https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3.sh -b -p "$HOME/miniforge3"
+source "$HOME/miniforge3/etc/profile.d/conda.sh"
+mamba env create -f "$REPO/environment.yml"
+conda activate ctdna-aneuploidy
+```
+
+If your cluster has no outbound internet access at all, build this
+environment on a machine that does, pack it with `conda-pack`, and
+transfer the resulting tarball - see the top-level `../README.md`'s
+"Running on an air-gapped / offline HPC cluster" section for the exact
+commands.
+
+**2. Reference resources (once per machine, into `$RUNDIR`):**
+
+```bash
+# LINE-1 element BED - downloads UCSC RepeatMasker (~500MB), needs internet
+"$REPO/mfast-seqs/resources/build_line1_bed.sh" "$RUNDIR/resources/line1_elements.hg38.bed"
+```
+
+For the genome: reuse an existing site-wide BWA index if your cluster
+has one (e.g. an iGenomes GATK GRCh38 bundle) - nothing to build or
+copy, just reference its path in step 3. Otherwise:
+
+```bash
+cp /path/to/genome.fa "$RUNDIR/resources/genome.fa"
+bwa index "$RUNDIR/resources/genome.fa"
+```
+
+`$REPO/mfast-seqs/resources/chrom_arms.hg38.bed` already ships with the
+repo (static, deterministic) - nothing to build for it.
+
+**3. Your `config.yaml` (once, outside the git clone):**
+
+```bash
+cp "$REPO/mfast-seqs/config/config.example.yaml" "$RUNDIR/config.yaml"
+```
+
+Edit `$RUNDIR/config.yaml` (never the tracked `config.example.yaml`):
+- `reference.fasta` -> your BWA index prefix (site-wide, or the one from step 2)
+- `reference.chrom_arms_bed` -> `$REPO/mfast-seqs/resources/chrom_arms.hg38.bed`
+- `reference.line1_bed` -> `$RUNDIR/resources/line1_elements.hg38.bed`
+- everything else has sensible defaults already filled in
+
+**4. Run every sample (controls and cases alike):**
+
+```bash
+"$REPO/mfast-seqs/scripts/make_sample_sheet.sh" /path/to/your/fastq_dir > "$RUNDIR/samples.tsv"
+sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+  --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
+  "$REPO/mfast-seqs/scripts/run_pipeline_array.sbatch" \
+  "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
+```
+
+(Or without SLURM, one sample at a time:
+`"$REPO/mfast-seqs/scripts/run_pipeline.sh" <sample> <fastq> "$RUNDIR/results/<sample>" "$RUNDIR/config.yaml"`.)
+
+This produces `$RUNDIR/results/<sample>/<sample>.arm_counts.tsv` for
+every sample.
+
+**5. Build the healthy-control baseline (once, from control samples only):**
+
+```bash
+python3 "$REPO/mfast-seqs/scripts/build_control_baseline.py" \
+  --counts "$RUNDIR"/results/control_*/control_*.arm_counts.tsv \
+  --out "$RUNDIR/results/baseline.tsv"
+```
+
+**6. Score each case sample against that baseline:**
+
+```bash
+python3 "$REPO/mfast-seqs/scripts/compute_aneuploidy_score.py" \
+  --counts "$RUNDIR/results/<sample>/<sample>.arm_counts.tsv" \
+  --baseline "$RUNDIR/results/baseline.tsv" \
+  --cutoff 5.0 \
+  --out "$RUNDIR/results/<sample>.aneuploidy.tsv"
+```

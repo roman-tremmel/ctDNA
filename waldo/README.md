@@ -149,111 +149,6 @@ and sensitivity at low tumor fractions.
   don't apply this correction - if your samples vary a lot in read
   depth, be aware low-depth samples may score higher than warranted.
 
-## Setup
-
-Same reference genome as `../mfast-seqs/` works here; only the
-window/cluster resources are specific to this pipeline.
-
-```bash
-bwa index resources/genome.fa
-python3 resources/build_chrom_arms_bed.py -o resources/chrom_arms.hg38.bed
-python3 resources/build_genome_windows.py -o resources/windows.500kb.hg38.bed
-resources/build_line1_bed.sh resources/line1_elements.hg38.bed
-```
-
-`config/config.yaml`'s `primer.forward_seq` is pre-filled with the
-LINE-1-specific core extracted from Verschoor et al. 2023 Supplementary
-Table 1 (`resources/primers_supplementary_table1.tsv`) - the same assay
-family WALDO's own paper cites (Kinde et al. 2012 FAST-SeqS), but not
-confirmed identical to WALDO's own primer, which wasn't available while
-building this. Replace it if you have WALDO's actual primer sequence.
-
-See `../mfast-seqs/README.md`'s "Running on an air-gapped / offline HPC
-cluster" section - the same applies here: only the genome/LINE-1-BED
-setup steps need internet, the pipeline itself runs entirely offline
-once those resources exist.
-
-## Running
-
-Per-sample counting (same pattern as mfast-seqs/):
-
-```bash
-scripts/run_pipeline.sh <sample_name> <sample.fastq.gz> results/<sample_name> config/config.yaml
-```
-
-### Running many samples on a SLURM cluster
-
-Same pattern as `mfast-seqs/` - build a sample sheet, submit an array
-job instead of looping:
-
-```bash
-mkdir -p logs
-scripts/make_sample_sheet.sh /path/to/fastq_dir > samples.tsv   # sample_name<TAB>fastq_path
-sbatch --array=1-$(wc -l < samples.tsv) \
-  scripts/run_pipeline_array.sbatch samples.tsv results config/config.yaml
-```
-
-See `../mfast-seqs/README.md`'s "Running many samples on a SLURM
-cluster" for details on the sample-sheet naming assumptions and how to
-adjust the `.sbatch` file for your cluster's resource requirements and
-conda setup.
-
-Build cluster membership from a panel of euploid reference samples (the
-paper found 7 sufficient; this is the SAME panel used for threshold
-calibration below, matching the paper's own reuse of its 677-WBC panel
-for both purposes):
-
-```bash
-python3 scripts/build_window_clusters.py \
-  --counts results/control_*/control_*.window_counts.tsv \
-  --mean-p-threshold 0.05 --var-p-threshold 0.05 \
-  --out results/clusters.tsv
-```
-
-Calibrate per-arm significance thresholds from the same reference panel:
-
-```bash
-python3 scripts/calibrate_threshold.py \
-  --counts results/control_*/control_*.window_counts.tsv \
-  --clusters results/clusters.tsv \
-  --windows-bed resources/windows.500kb.hg38.bed \
-  --arms-bed resources/chrom_arms.hg38.bed \
-  --excluded-arms chr13p chr14p chr15p chr21p chr22p chrYp chrYq \
-  --margin 4.0 \
-  --out results/thresholds.tsv
-```
-
-Call per-arm gains/losses for a case sample:
-
-```bash
-python3 scripts/call_aneuploidy.py \
-  --counts results/<sample_name>/<sample_name>.window_counts.tsv \
-  --clusters results/clusters.tsv \
-  --windows-bed resources/windows.500kb.hg38.bed \
-  --arms-bed resources/chrom_arms.hg38.bed \
-  --excluded-arms chr13p chr14p chr15p chr21p chr22p chrYp chrYq \
-  --threshold-table results/thresholds.tsv \
-  --out results/<sample_name>.arm_scores.tsv
-```
-
-Optional: train and apply the SVM genome-wide classifier once you have
-labeled samples (per the paper, only meaningful for samples where step
-above found no single significant arm):
-
-```bash
-python3 scripts/build_feature_matrix.py \
-  --scores results/sampleA.arm_scores.tsv results/sampleB.arm_scores.tsv ... \
-  --names sampleA sampleB ... \
-  --out results/feature_matrix.tsv
-
-python3 scripts/train_svm_classifier.py \
-  --features results/feature_matrix.tsv --labels labels.tsv \
-  --out results/model.joblib
-
-python3 scripts/classify_sample.py \
-  --scores results/<sample_name>.arm_scores.tsv --model results/model.joblib
-```
-
 ## Known limitations and caveats
 
 - **Real-scale reference panels needed for calibration.** With few
@@ -290,4 +185,141 @@ full pipeline end to end - trim, align, count, cluster, calibrate,
 score. Validates pipeline *mechanics* on a toy-scale genome; not a
 validation of the real biology, of numerical agreement with the
 published WALDO tool, or of the calibrated threshold being reliable at
-this scale (see "Known limitations" above).
+this scale (see "Known limitations" above). It's self-contained (writes
+to a temp directory) and needs no setup from "How to run" below.
+
+## How to run
+
+**Nothing below ever writes inside the git clone.** Everything
+generated (environment, downloaded resources, your `config.yaml`,
+results, logs) goes into an external run directory, so `git pull`
+always stays conflict-free no matter what you've run. Set these two
+variables once per shell session (adjust to your actual paths):
+
+```bash
+export REPO=/path/to/ctDNA        # your git clone (top level, not waldo/)
+export RUNDIR=/path/to/your/rundir   # anywhere OUTSIDE the git clone
+mkdir -p "$RUNDIR"/{resources,results,logs}
+```
+
+**1. Environment (once per machine, no root needed):**
+
+```bash
+curl -fsSL -o Miniforge3.sh \
+  https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3.sh -b -p "$HOME/miniforge3"
+source "$HOME/miniforge3/etc/profile.d/conda.sh"
+mamba env create -f "$REPO/environment.yml"
+conda activate ctdna-aneuploidy
+```
+
+If your cluster has no outbound internet access at all, build this
+environment on a machine that does, pack it with `conda-pack`, and
+transfer the resulting tarball - see the top-level `../README.md`'s
+"Running on an air-gapped / offline HPC cluster" section for the exact
+commands. (Same environment as `../mfast-seqs/` - one env covers both
+pipelines.)
+
+**2. Reference resources (once per machine, into `$RUNDIR`):**
+
+```bash
+# LINE-1 element BED - downloads UCSC RepeatMasker (~500MB), needs internet
+"$REPO/waldo/resources/build_line1_bed.sh" "$RUNDIR/resources/line1_elements.hg38.bed"
+```
+
+For the genome: reuse an existing site-wide BWA index if your cluster
+has one (e.g. an iGenomes GATK GRCh38 bundle) - nothing to build or
+copy, just reference its path in step 3. Otherwise:
+
+```bash
+cp /path/to/genome.fa "$RUNDIR/resources/genome.fa"
+bwa index "$RUNDIR/resources/genome.fa"
+```
+
+`$REPO/waldo/resources/chrom_arms.hg38.bed` and
+`$REPO/waldo/resources/windows.500kb.hg38.bed` already ship with the
+repo (static, deterministic) - nothing to build for either.
+
+**3. Your `config.yaml` (once, outside the git clone):**
+
+```bash
+cp "$REPO/waldo/config/config.example.yaml" "$RUNDIR/config.yaml"
+```
+
+Edit `$RUNDIR/config.yaml` (never the tracked `config.example.yaml`):
+- `reference.fasta` -> your BWA index prefix (site-wide, or the one from step 2)
+- `reference.chrom_arms_bed` -> `$REPO/waldo/resources/chrom_arms.hg38.bed`
+- `reference.windows_bed` -> `$REPO/waldo/resources/windows.500kb.hg38.bed`
+- `reference.line1_bed` -> `$RUNDIR/resources/line1_elements.hg38.bed`
+- everything else has sensible defaults already filled in
+
+**4. Run every sample (reference/control and case samples alike):**
+
+```bash
+"$REPO/waldo/scripts/make_sample_sheet.sh" /path/to/your/fastq_dir > "$RUNDIR/samples.tsv"
+sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+  --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
+  "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
+  "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
+```
+
+(Or without SLURM, one sample at a time:
+`"$REPO/waldo/scripts/run_pipeline.sh" <sample> <fastq> "$RUNDIR/results/<sample>" "$RUNDIR/config.yaml"`.)
+
+This produces `$RUNDIR/results/<sample>/<sample>.window_counts.tsv` for
+every sample.
+
+**5. Learn cluster membership from your euploid reference samples**
+(7 sufficient per the paper; the SAME panel is reused for calibration
+in step 6, matching the paper's own approach):
+
+```bash
+python3 "$REPO/waldo/scripts/build_window_clusters.py" \
+  --counts "$RUNDIR"/results/control_*/control_*.window_counts.tsv \
+  --mean-p-threshold 0.05 --var-p-threshold 0.05 \
+  --out "$RUNDIR/results/clusters.tsv"
+```
+
+**6. Calibrate per-arm significance thresholds from the same panel:**
+
+```bash
+python3 "$REPO/waldo/scripts/calibrate_threshold.py" \
+  --counts "$RUNDIR"/results/control_*/control_*.window_counts.tsv \
+  --clusters "$RUNDIR/results/clusters.tsv" \
+  --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" \
+  --arms-bed "$REPO/waldo/resources/chrom_arms.hg38.bed" \
+  --excluded-arms chr13p chr14p chr15p chr21p chr22p chrYp chrYq \
+  --margin 4.0 \
+  --out "$RUNDIR/results/thresholds.tsv"
+```
+
+**7. Call per-arm gains/losses for a case sample:**
+
+```bash
+python3 "$REPO/waldo/scripts/call_aneuploidy.py" \
+  --counts "$RUNDIR/results/<sample>/<sample>.window_counts.tsv" \
+  --clusters "$RUNDIR/results/clusters.tsv" \
+  --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" \
+  --arms-bed "$REPO/waldo/resources/chrom_arms.hg38.bed" \
+  --excluded-arms chr13p chr14p chr15p chr21p chr22p chrYp chrYq \
+  --threshold-table "$RUNDIR/results/thresholds.tsv" \
+  --out "$RUNDIR/results/<sample>.arm_scores.tsv"
+```
+
+**8. Optional: train/apply the SVM genome-wide classifier**, once you
+have labeled samples (per the paper, only meaningful for samples where
+step 7 found no single significant arm):
+
+```bash
+python3 "$REPO/waldo/scripts/build_feature_matrix.py" \
+  --scores "$RUNDIR/results/sampleA.arm_scores.tsv" "$RUNDIR/results/sampleB.arm_scores.tsv" \
+  --names sampleA sampleB \
+  --out "$RUNDIR/results/feature_matrix.tsv"
+
+python3 "$REPO/waldo/scripts/train_svm_classifier.py" \
+  --features "$RUNDIR/results/feature_matrix.tsv" --labels "$RUNDIR/labels.tsv" \
+  --out "$RUNDIR/results/model.joblib"
+
+python3 "$REPO/waldo/scripts/classify_sample.py" \
+  --scores "$RUNDIR/results/<sample>.arm_scores.tsv" --model "$RUNDIR/results/model.joblib"
+```

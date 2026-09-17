@@ -3,19 +3,25 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 #SBATCH --time=02:00:00
-#SBATCH --output=logs/%x_%A_%a.out
-#SBATCH --error=logs/%x_%A_%a.err
 #
 # SLURM array job: one task per sample, running run_pipeline.sh (trim ->
 # align -> per-window counting). Works for both reference/control and
 # case samples - clustering, calibration, and scoring happen afterwards,
 # once every array task has finished.
 #
-# Usage:
-#   mkdir -p logs
-#   scripts/make_sample_sheet.sh /project/cfDNA_Schroth/test_samples/Fastq > samples.tsv
-#   sbatch --array=1-$(wc -l < samples.tsv) \
-#     scripts/run_pipeline_array.sbatch samples.tsv results config/config.yaml
+# No default --output/--error here on purpose: this script lives in the
+# git clone, but logs must not land inside it (see ../../README.md
+# "Nothing is ever written inside the git clone") - always pass explicit
+# --output/--error pointing at your external $RUNDIR, e.g.:
+#
+#   mkdir -p "$RUNDIR"/logs
+#   "$REPO/waldo/scripts/make_sample_sheet.sh" /path/to/fastq_dir > "$RUNDIR/samples.tsv"
+#   sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+#     --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
+#     "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
+#     "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
+#
+# See ../README.md "How to run" for the full sequence.
 set -euo pipefail
 
 SAMPLE_SHEET="$1"
