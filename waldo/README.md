@@ -287,7 +287,13 @@ hardcoded default `$HOME/miniforge3` and fails with e.g.
 your install lives anywhere else. If your env itself isn't at the
 default `$CONDA_ROOT/envs/ctdna-aneuploidy` subpath, override that
 directly instead: add `,CONDA_ENV_PATH=/full/path/to/envs/your-env` to
-the same `--export` list.
+the same `--export` list. A common case: a standalone `mamba` binary
+(separate from a `conda`/`miniconda3` install) defaults to its own root
+prefix at `~/.local/share/mamba` and creates envs under
+`~/.local/share/mamba/envs/`, not under your `conda`'s own `envs/` -
+check with `conda env list` if unsure where an env actually landed.
+`CONDA_ROOT` only needs to point at *some* working conda installation
+to source its `conda.sh` hook; `CONDA_ENV_PATH` can point anywhere.
 
 This produces `$RUNDIR/results/<sample>/<sample>.window_counts.tsv` for
 every sample.
