@@ -33,8 +33,21 @@ files and reproduces the paper's dry-lab analysis:
    controls is required" below.
 5. **Sum the squared Z-scores** over all included arms (excluding the
    acrocentric short arms 13p/14p/15p/21p/22p and chrY, which carry too
-   few LINE-1 elements) to get the genome-wide **aneuploidy score**.
-6. Classify against a cutoff (5.0, as used in the paper).
+   few LINE-1 elements). This raw sum is chi-square-like and has an
+   expected value of roughly the number of included arms (~39) even for
+   a genuinely healthy sample - **not 0**.
+6. **Standardize that raw sum a second time**, against the mean/SD of
+   the same raw sum computed (leave-one-out) across the healthy-control
+   panel itself, to get the final genome-wide **aneuploidy score** -
+   this is what makes it cluster near 0 for healthy samples and
+   meaningful as "the number of standard deviations the sample is
+   deviating from the healthy controls" (the paper's own phrasing).
+   Skipping this second standardization and comparing the raw sum
+   directly to a cutoff would flag essentially every sample, including
+   healthy controls, as "high" - a real bug this pipeline had until
+   validated against real data (see `compute_aneuploidy_score.py`'s
+   docstring for the full explanation).
+7. Classify against a cutoff (5.0, as used in the paper).
 
 ## A cohort of healthy controls is required
 
@@ -248,6 +261,15 @@ sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
 
 (The `control_*` glob is why step 4 has you prefix control samples'
 names with a group label - adjust the glob if you used a different label.)
+
+This also computes and stores the control panel's own raw-score mean/SD
+(leave-one-out) in `baseline.tsv`, needed for step 6's second-level
+standardization - see "Pipeline" above. **Rebuild `baseline.tsv`** if
+you built it with a version of this repo from before that second level
+existed (i.e. before `build_control_baseline.py` printed a "Control
+panel's own (leave-one-out) raw scores: ..." line) - scores computed
+against an old-format baseline will error out, since
+`compute_aneuploidy_score.py` now requires it.
 
 **6. Score every sample against that baseline:**
 
