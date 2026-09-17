@@ -173,6 +173,27 @@ Edit `$RUNDIR/config.yaml` (never the tracked `config.example.yaml`):
 
 ```bash
 "$REPO/mfast-seqs/scripts/make_sample_sheet.sh" /path/to/your/fastq_dir > "$RUNDIR/samples.tsv"
+```
+
+`samples.tsv` has two columns so far: `sample_name<TAB>fastq_path`. Add
+a **3rd column by hand** (open it in a text editor) marking which
+samples are healthy controls, e.g. `control` - leave it blank for case
+samples:
+
+```
+V91-02	/path/to/fastq/V91-02_S1_L001_R1_001.fastq.gz	control
+V91-05	/path/to/fastq/V91-05_S2_L001_R1_001.fastq.gz
+V91-07	/path/to/fastq/V91-07_S3_L001_R1_001.fastq.gz	control
+```
+
+`run_pipeline_array.sbatch` prefixes that group label onto the sample
+name (`control_V91-02`), so the resulting output directory/files are
+`results/control_V91-02/control_V91-02.arm_counts.tsv` etc. - which is
+exactly what lets step 5's `results/control_*/control_*.arm_counts.tsv`
+glob pick out every control sample later, regardless of what your
+underlying sample IDs look like.
+
+```bash
 sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
   --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
   --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
@@ -211,38 +232,30 @@ every sample.
 
 **5. Build the healthy-control baseline (once, from control samples only):**
 
-Nothing in `run_pipeline.sh`/`make_sample_sheet.sh` knows which of your
-sample IDs are healthy controls vs. cases - that's your study design,
-not something derivable from a filename like `V91-01`. Maintain your
-own plain-text list and use it to build the `--counts` argument instead
-of guessing at a naming convention:
+This and step 6 are lightweight compared to alignment, but still run
+via SLURM, not directly on a login node - `run_step.sbatch` activates
+the conda env exactly like the array job and then runs whatever command
+you give it:
 
 ```bash
-# one control sample name per line - names must match what you used as
-# <sample_name> in step 4 (make_sample_sheet.sh's first column, or
-# whatever you passed run_pipeline.sh directly)
-cat > "$RUNDIR/controls.txt" <<'EOF'
-V91-02
-V91-07
-V91-11
-EOF
-
-python3 "$REPO/mfast-seqs/scripts/build_control_baseline.py" \
-  --counts $("$REPO/mfast-seqs/scripts/counts_for_samples.sh" \
-               "$RUNDIR/results" .arm_counts.tsv "$RUNDIR/controls.txt") \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/mfast-seqs/scripts/run_step.sbatch" \
+  python3 "$REPO/mfast-seqs/scripts/build_control_baseline.py" \
+  --counts "$RUNDIR"/results/control_*/control_*.arm_counts.tsv \
   --out "$RUNDIR/results/baseline.tsv"
 ```
 
-(If your sample IDs *do* happen to share a consistent, greppable prefix
-or pattern, a plain shell glob like
-`"$RUNDIR"/results/control_*/control_*.arm_counts.tsv` works just as
-well instead of maintaining `controls.txt` - `counts_for_samples.sh` is
-there for when they don't.)
+(The `control_*` glob is why step 4 has you prefix control samples'
+names with a group label - adjust the glob if you used a different label.)
 
 **6. Score each case sample against that baseline:**
 
 ```bash
-python3 "$REPO/mfast-seqs/scripts/compute_aneuploidy_score.py" \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/mfast-seqs/scripts/run_step.sbatch" \
+  python3 "$REPO/mfast-seqs/scripts/compute_aneuploidy_score.py" \
   --counts "$RUNDIR/results/<sample>/<sample>.arm_counts.tsv" \
   --baseline "$RUNDIR/results/baseline.tsv" \
   --cutoff 5.0 \

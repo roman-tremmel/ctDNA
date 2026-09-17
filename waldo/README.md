@@ -275,6 +275,28 @@ Edit `$RUNDIR/config.yaml` (never the tracked `config.example.yaml`):
 
 ```bash
 "$REPO/waldo/scripts/make_sample_sheet.sh" /path/to/your/fastq_dir > "$RUNDIR/samples.tsv"
+```
+
+`samples.tsv` has two columns so far: `sample_name<TAB>fastq_path`. Add
+a **3rd column by hand** (open it in a text editor) marking which
+samples are euploid reference samples, e.g. `control` - leave it blank
+for case samples:
+
+```
+V91-02	/path/to/fastq/V91-02_S1_L001_R1_001.fastq.gz	control
+V91-05	/path/to/fastq/V91-05_S2_L001_R1_001.fastq.gz
+V91-07	/path/to/fastq/V91-07_S3_L001_R1_001.fastq.gz	control
+```
+
+`run_pipeline_array.sbatch` prefixes that group label onto the sample
+name (`control_V91-02`), so the resulting output directory/files are
+`results/control_V91-02/control_V91-02.window_counts.tsv` etc. - which
+is exactly what lets step 5's
+`results/control_*/control_*.window_counts.tsv` glob pick out every
+reference sample later, regardless of what your underlying sample IDs
+look like.
+
+```bash
 sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
   --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
   --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
@@ -311,39 +333,36 @@ argument is optional** - both are load-bearing, not just-in-case:
 This produces `$RUNDIR/results/<sample>/<sample>.window_counts.tsv` for
 every sample.
 
+Steps 5-8 are lightweight compared to alignment, but still run via
+SLURM, not directly on a login node - `run_step.sbatch` activates the
+conda env exactly like the array job and then runs whatever command you
+give it. Reuse the same `--export=ALL,CONDA_ROOT=...,CONDA_ENV_PATH=...`
+and `--output`/`--error` flags as step 4 on every call below (omitted
+from here on for brevity).
+
 **5. Learn cluster membership from your euploid reference samples**
 (7 sufficient per the paper; the SAME panel is reused for calibration
-in step 6, matching the paper's own approach):
-
-Nothing in `run_pipeline.sh`/`make_sample_sheet.sh` knows which of your
-sample IDs are euploid reference samples vs. cases - maintain your own
-plain-text list (names must match what you used as `<sample_name>` in
-step 4) and build the `--counts` argument from it:
+in step 6, matching the paper's own approach). The `control_*` glob
+picks up every reference sample you labeled in step 4's `samples.tsv`:
 
 ```bash
-cat > "$RUNDIR/controls.txt" <<'EOF'
-V91-02
-V91-07
-V91-11
-EOF
-
-python3 "$REPO/waldo/scripts/build_window_clusters.py" \
-  --counts $("$REPO/waldo/scripts/counts_for_samples.sh" \
-               "$RUNDIR/results" .window_counts.tsv "$RUNDIR/controls.txt") \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/waldo/scripts/run_step.sbatch" \
+  python3 "$REPO/waldo/scripts/build_window_clusters.py" \
+  --counts "$RUNDIR"/results/control_*/control_*.window_counts.tsv \
   --mean-p-threshold 0.05 --var-p-threshold 0.05 \
   --out "$RUNDIR/results/clusters.tsv"
 ```
 
-(If your sample IDs share a consistent, greppable prefix instead, a
-plain shell glob works just as well - `counts_for_samples.sh` is for
-when they don't.)
-
 **6. Calibrate per-arm significance thresholds from the same panel:**
 
 ```bash
-python3 "$REPO/waldo/scripts/calibrate_threshold.py" \
-  --counts $("$REPO/waldo/scripts/counts_for_samples.sh" \
-               "$RUNDIR/results" .window_counts.tsv "$RUNDIR/controls.txt") \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/waldo/scripts/run_step.sbatch" \
+  python3 "$REPO/waldo/scripts/calibrate_threshold.py" \
+  --counts "$RUNDIR"/results/control_*/control_*.window_counts.tsv \
   --clusters "$RUNDIR/results/clusters.tsv" \
   --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" \
   --arms-bed "$REPO/waldo/resources/chrom_arms.hg38.bed" \
@@ -355,7 +374,10 @@ python3 "$REPO/waldo/scripts/calibrate_threshold.py" \
 **7. Call per-arm gains/losses for a case sample:**
 
 ```bash
-python3 "$REPO/waldo/scripts/call_aneuploidy.py" \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/waldo/scripts/run_step.sbatch" \
+  python3 "$REPO/waldo/scripts/call_aneuploidy.py" \
   --counts "$RUNDIR/results/<sample>/<sample>.window_counts.tsv" \
   --clusters "$RUNDIR/results/clusters.tsv" \
   --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" \
@@ -370,15 +392,24 @@ have labeled samples (per the paper, only meaningful for samples where
 step 7 found no single significant arm):
 
 ```bash
-python3 "$REPO/waldo/scripts/build_feature_matrix.py" \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/waldo/scripts/run_step.sbatch" \
+  python3 "$REPO/waldo/scripts/build_feature_matrix.py" \
   --scores "$RUNDIR/results/sampleA.arm_scores.tsv" "$RUNDIR/results/sampleB.arm_scores.tsv" \
   --names sampleA sampleB \
   --out "$RUNDIR/results/feature_matrix.tsv"
 
-python3 "$REPO/waldo/scripts/train_svm_classifier.py" \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/waldo/scripts/run_step.sbatch" \
+  python3 "$REPO/waldo/scripts/train_svm_classifier.py" \
   --features "$RUNDIR/results/feature_matrix.tsv" --labels "$RUNDIR/labels.tsv" \
   --out "$RUNDIR/results/model.joblib"
 
-python3 "$REPO/waldo/scripts/classify_sample.py" \
+sbatch --export=ALL,CONDA_ROOT="$CONDA_ROOT",CONDA_ENV_PATH="$CONDA_ENV_PATH" \
+  --output="$RUNDIR/logs/%x_%j.out" --error="$RUNDIR/logs/%x_%j.err" \
+  "$REPO/waldo/scripts/run_step.sbatch" \
+  python3 "$REPO/waldo/scripts/classify_sample.py" \
   --scores "$RUNDIR/results/<sample>.arm_scores.tsv" --model "$RUNDIR/results/model.joblib"
 ```

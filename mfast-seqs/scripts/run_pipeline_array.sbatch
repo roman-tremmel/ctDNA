@@ -10,6 +10,14 @@
 # build_control_baseline.py or compute_aneuploidy_score.py) happens
 # afterwards, once every array task has finished.
 #
+# samples.tsv has an OPTIONAL 3rd column: a group label you add by hand
+# (e.g. "control" for healthy controls, "case" or blank for everything
+# else). When present, it's prefixed onto the sample name (and therefore
+# the output directory/file names) as "<group>_<sample>", so a plain
+# shell glob like results/control_*/control_*.arm_counts.tsv picks up
+# every control sample for build_control_baseline.py without needing
+# your original sample IDs to follow any particular naming convention.
+#
 # No default --output/--error here on purpose: this script lives in the
 # git clone, but logs must not land inside it (see ../../README.md
 # "Nothing is ever written inside the git clone") - always pass explicit
@@ -89,8 +97,15 @@ if [[ -z "$LINE" ]]; then
 fi
 SAMPLE=$(cut -f1 <<< "$LINE")
 FASTQ=$(cut -f2 <<< "$LINE")
+GROUP=$(cut -f3 <<< "$LINE")   # empty string if samples.tsv has no 3rd column
 
-echo "[task $SLURM_ARRAY_TASK_ID] sample=$SAMPLE fastq=$FASTQ"
+if [[ -n "$GROUP" ]]; then
+  SAMPLE_ID="${GROUP}_${SAMPLE}"
+else
+  SAMPLE_ID="$SAMPLE"
+fi
+
+echo "[task $SLURM_ARRAY_TASK_ID] sample=$SAMPLE group=${GROUP:-<none>} -> $SAMPLE_ID fastq=$FASTQ"
 mkdir -p "$OUTDIR_ROOT"
 
-"$SCRIPT_DIR/run_pipeline.sh" "$SAMPLE" "$FASTQ" "$OUTDIR_ROOT/$SAMPLE" "$CONFIG"
+"$SCRIPT_DIR/run_pipeline.sh" "$SAMPLE_ID" "$FASTQ" "$OUTDIR_ROOT/$SAMPLE_ID" "$CONFIG"
