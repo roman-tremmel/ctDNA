@@ -12,20 +12,27 @@
 # No default --output/--error here on purpose: this script lives in the
 # git clone, but logs must not land inside it (see ../../README.md
 # "Nothing is ever written inside the git clone") - always pass explicit
-# --output/--error pointing at your external $RUNDIR, e.g.:
+# --output/--error pointing at your external $RUNDIR. And --export=ALL
+# is NOT optional: SLURM does not reliably hand a submitting shell's
+# exported variables ($CONDA_ROOT below) to the job on every cluster's
+# configuration - without it, this script silently falls back to its
+# hardcoded default ($HOME/miniforge3) and fails if your install is
+# anywhere else. Full example:
 #
 #   mkdir -p "$RUNDIR"/logs
 #   "$REPO/waldo/scripts/make_sample_sheet.sh" /path/to/fastq_dir > "$RUNDIR/samples.tsv"
 #   sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+#     --export=ALL,CONDA_ROOT="$CONDA_ROOT" \
 #     --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
 #     "$REPO/waldo/scripts/run_pipeline_array.sbatch" \
 #     "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
 #
 # See ../README.md "How to run" for the full sequence.
 #
-# Conda root/env are overridable without editing this file, e.g.:
-#   sbatch --export=ALL,CONDA_ROOT=/other/path,CONDA_ENV_NAME=my-env ...
-#   sbatch --export=ALL,CONDA_ENV_PATH=/full/path/to/envs/my-env ...
+# If your conda env itself isn't at the default $CONDA_ROOT/envs/<name>
+# subpath, override that directly instead - add to the same --export list:
+#   ,CONDA_ENV_NAME=my-env             (still under $CONDA_ROOT/envs/)
+#   ,CONDA_ENV_PATH=/full/path/to/envs/my-env   (anywhere at all)
 set -eo pipefail
 CONDA_ROOT="${CONDA_ROOT:-$HOME/miniforge3}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-ctdna-aneuploidy}"

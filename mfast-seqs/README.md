@@ -106,13 +106,22 @@ mkdir -p "$RUNDIR"/{resources,results,logs}
 **1. Environment (once per machine, no root needed):**
 
 ```bash
+export CONDA_ROOT="$HOME/miniforge3"   # note this value - step 4's sbatch calls need it too
+
 curl -fsSL -o Miniforge3.sh \
   https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
-bash Miniforge3.sh -b -p "$HOME/miniforge3"
-source "$HOME/miniforge3/etc/profile.d/conda.sh"
+bash Miniforge3.sh -b -p "$CONDA_ROOT"
+source "$CONDA_ROOT/etc/profile.d/conda.sh"
 mamba env create -f "$REPO/environment.yml"
 conda activate ctdna-aneuploidy
 ```
+
+If Miniforge is already installed on your cluster, set `CONDA_ROOT` to
+wherever it actually lives instead
+(check with `conda info --base`, or `ls -d ~/miniforge3 ~/miniconda3
+~/mambaforge ~/anaconda3 2>/dev/null` if `conda` isn't on your PATH by
+default) - `$HOME/miniforge3` is only this guide's own install location
+from the command above, not a requirement.
 
 If your cluster has no outbound internet access at all, build this
 environment on a machine that does, pack it with `conda-pack`, and
@@ -156,6 +165,7 @@ Edit `$RUNDIR/config.yaml` (never the tracked `config.example.yaml`):
 ```bash
 "$REPO/mfast-seqs/scripts/make_sample_sheet.sh" /path/to/your/fastq_dir > "$RUNDIR/samples.tsv"
 sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
+  --export=ALL,CONDA_ROOT="$CONDA_ROOT" \
   --output="$RUNDIR/logs/%x_%A_%a.out" --error="$RUNDIR/logs/%x_%A_%a.err" \
   "$REPO/mfast-seqs/scripts/run_pipeline_array.sbatch" \
   "$RUNDIR/samples.tsv" "$RUNDIR/results" "$RUNDIR/config.yaml"
@@ -164,14 +174,18 @@ sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
 (Or without SLURM, one sample at a time:
 `"$REPO/mfast-seqs/scripts/run_pipeline.sh" <sample> <fastq> "$RUNDIR/results/<sample>" "$RUNDIR/config.yaml"`.)
 
-`run_pipeline_array.sbatch` activates the conda env itself by full path
-(`$CONDA_ROOT/envs/ctdna-aneuploidy` by default), since name-based
-`conda activate`/`mamba activate` can silently fail to find an env in a
-batch job even when it works interactively. If a job fails with "bwa
-still not on PATH", your env lives somewhere else - override without
-editing the script:
-`sbatch --export=ALL,CONDA_ENV_PATH=/full/path/to/envs/ctdna-aneuploidy ...`
-(or `CONDA_ROOT=/other/miniforge3/location`).
+**The `--export=ALL,CONDA_ROOT="$CONDA_ROOT"` is not optional.** SLURM
+does not reliably hand a submitting shell's exported variables to the
+job on every cluster's configuration - `run_pipeline_array.sbatch`
+reads `$CONDA_ROOT` to find and activate the conda env by full path
+(`$CONDA_ROOT/envs/ctdna-aneuploidy`), and without it explicitly
+exported on the `sbatch` command line, the job falls back to the
+hardcoded default `$HOME/miniforge3` and fails with e.g.
+`.../miniforge3/etc/profile.d/conda.sh: No such file or directory` if
+your install lives anywhere else. If your env itself isn't at the
+default `$CONDA_ROOT/envs/ctdna-aneuploidy` subpath, override that
+directly instead: add `,CONDA_ENV_PATH=/full/path/to/envs/your-env` to
+the same `--export` list.
 
 This produces `$RUNDIR/results/<sample>/<sample>.arm_counts.tsv` for
 every sample.
