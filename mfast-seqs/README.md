@@ -164,6 +164,15 @@ sbatch --array=1-$(wc -l < "$RUNDIR/samples.tsv") \
 (Or without SLURM, one sample at a time:
 `"$REPO/mfast-seqs/scripts/run_pipeline.sh" <sample> <fastq> "$RUNDIR/results/<sample>" "$RUNDIR/config.yaml"`.)
 
+`run_pipeline_array.sbatch` activates the conda env itself by full path
+(`$CONDA_ROOT/envs/ctdna-aneuploidy` by default), since name-based
+`conda activate`/`mamba activate` can silently fail to find an env in a
+batch job even when it works interactively. If a job fails with "bwa
+still not on PATH", your env lives somewhere else - override without
+editing the script:
+`sbatch --export=ALL,CONDA_ENV_PATH=/full/path/to/envs/ctdna-aneuploidy ...`
+(or `CONDA_ROOT=/other/miniforge3/location`).
+
 This produces `$RUNDIR/results/<sample>/<sample>.arm_counts.tsv` for
 every sample.
 
