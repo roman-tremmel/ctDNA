@@ -315,18 +315,35 @@ every sample.
 (7 sufficient per the paper; the SAME panel is reused for calibration
 in step 6, matching the paper's own approach):
 
+Nothing in `run_pipeline.sh`/`make_sample_sheet.sh` knows which of your
+sample IDs are euploid reference samples vs. cases - maintain your own
+plain-text list (names must match what you used as `<sample_name>` in
+step 4) and build the `--counts` argument from it:
+
 ```bash
+cat > "$RUNDIR/controls.txt" <<'EOF'
+V91-02
+V91-07
+V91-11
+EOF
+
 python3 "$REPO/waldo/scripts/build_window_clusters.py" \
-  --counts "$RUNDIR"/results/control_*/control_*.window_counts.tsv \
+  --counts $("$REPO/waldo/scripts/counts_for_samples.sh" \
+               "$RUNDIR/results" .window_counts.tsv "$RUNDIR/controls.txt") \
   --mean-p-threshold 0.05 --var-p-threshold 0.05 \
   --out "$RUNDIR/results/clusters.tsv"
 ```
+
+(If your sample IDs share a consistent, greppable prefix instead, a
+plain shell glob works just as well - `counts_for_samples.sh` is for
+when they don't.)
 
 **6. Calibrate per-arm significance thresholds from the same panel:**
 
 ```bash
 python3 "$REPO/waldo/scripts/calibrate_threshold.py" \
-  --counts "$RUNDIR"/results/control_*/control_*.window_counts.tsv \
+  --counts $("$REPO/waldo/scripts/counts_for_samples.sh" \
+               "$RUNDIR/results" .window_counts.tsv "$RUNDIR/controls.txt") \
   --clusters "$RUNDIR/results/clusters.tsv" \
   --windows-bed "$REPO/waldo/resources/windows.500kb.hg38.bed" \
   --arms-bed "$REPO/waldo/resources/chrom_arms.hg38.bed" \

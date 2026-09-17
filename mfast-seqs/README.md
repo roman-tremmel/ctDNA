@@ -211,11 +211,33 @@ every sample.
 
 **5. Build the healthy-control baseline (once, from control samples only):**
 
+Nothing in `run_pipeline.sh`/`make_sample_sheet.sh` knows which of your
+sample IDs are healthy controls vs. cases - that's your study design,
+not something derivable from a filename like `V91-01`. Maintain your
+own plain-text list and use it to build the `--counts` argument instead
+of guessing at a naming convention:
+
 ```bash
+# one control sample name per line - names must match what you used as
+# <sample_name> in step 4 (make_sample_sheet.sh's first column, or
+# whatever you passed run_pipeline.sh directly)
+cat > "$RUNDIR/controls.txt" <<'EOF'
+V91-02
+V91-07
+V91-11
+EOF
+
 python3 "$REPO/mfast-seqs/scripts/build_control_baseline.py" \
-  --counts "$RUNDIR"/results/control_*/control_*.arm_counts.tsv \
+  --counts $("$REPO/mfast-seqs/scripts/counts_for_samples.sh" \
+               "$RUNDIR/results" .arm_counts.tsv "$RUNDIR/controls.txt") \
   --out "$RUNDIR/results/baseline.tsv"
 ```
+
+(If your sample IDs *do* happen to share a consistent, greppable prefix
+or pattern, a plain shell glob like
+`"$RUNDIR"/results/control_*/control_*.arm_counts.tsv` works just as
+well instead of maintaining `controls.txt` - `counts_for_samples.sh` is
+there for when they don't.)
 
 **6. Score each case sample against that baseline:**
 
